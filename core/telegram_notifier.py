@@ -11,7 +11,20 @@ class TelegramNotifier:
     def _format(self, s: Signal) -> str:
         emoji = "🟢" if s.type == SignalType.BUY else "🔴"
         action = "ALIŞ" if s.type == SignalType.BUY else "SATIŞ"
-        return f"{emoji} *{action} SİNYALİ*\n\n📊 *Parite:* `{s.symbol}`\n⏱ *Zaman:* `{s.timeframe}`\n💵 *Fiyat:* `{s.price:.6g}`\n🎯 *Güç:* {s.strength*100:.0f}%\n📝 _{s.reason}_"
+        
+        msg = f"{emoji} *{action} SİNYALİ*\n\n"
+        msg += f"📊 *Parite:* `{s.symbol}`\n"
+        msg += f"⏱ *Zaman:* `{s.timeframe}`\n"
+        msg += f"💵 *Fiyat:* `{s.price:.6g}`\n"
+        
+        if s.stop_loss:
+            msg += f"🛑 *Stop:* `{s.stop_loss:.6g}`\n"
+        if s.take_profit:
+            msg += f"✅ *Hedef:* `{s.take_profit:.6g}`\n"
+            
+        msg += f"🎯 *Güç:* {s.strength*100:.0f}%\n"
+        msg += f"📝 _{s.reason}_"
+        return msg
 
     async def send(self, signal: Signal):
         try:
