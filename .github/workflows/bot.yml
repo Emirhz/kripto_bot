@@ -1,4 +1,5 @@
 name: Kripto Sinyal Botu
+
 on:
   schedule:
     - cron: '*/15 * * * *'
