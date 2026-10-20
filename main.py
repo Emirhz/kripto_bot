@@ -7,6 +7,19 @@ from core.logger import log
 
 async def main():
     log.info("Bot başlatıldı...")
+    
+    # --- TELEGRAM TEST MESAJI ---
+    test_bot = TelegramNotifier()
+    try:
+        await test_bot.bot.send_message(
+            chat_id=os.getenv("TELEGRAM_CHAT_ID"),
+            text="✅ TEST BAŞARILI! Bot çalışıyor ve bağlantı kuruldu."
+        )
+        log.info("Telegram test mesajı gönderildi.")
+    except Exception as e:
+        log.error(f"TELEGRAM BAĞLANTI HATASI: {e}")
+    # ----------------------------
+    
     symbols = os.getenv("SYMBOLS", "BTC/USDT").split(",")
     timeframe = os.getenv("TIMEFRAME", "15m")
     
