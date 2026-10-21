@@ -3,7 +3,7 @@ name: Kripto Sinyal Botu
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
   push:
   
@@ -23,7 +23,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SYMBOLS: "SOL/USDT,BNB/USDT,XRP/USDT,ADA/USDT,AVAX/USDT,DOGE/USDT,LINK/USDT,NEAR/USDT,FET/USDT,INJ/USDT"
-          TIMEFRAME: "15m"
+          SYMBOLS: "SOL/USDT,BNB/USDT,XRP/USDT,ADA/USDT,AVAX/USDT,DOGE/USDT,LINK/USDT,NEAR/USDT,FET/USDT,INJ/USDT,APT/USDT,SUI/USDT,TIA/USDT,SEI/USDT,RNDR/USDT"
+          TIMEFRAME: "30m"
           EXCHANGE: "binance"
         run: python main.py
