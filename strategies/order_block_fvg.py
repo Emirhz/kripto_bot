@@ -9,7 +9,7 @@ class OrderBlockFVGStrategy(BaseStrategy):
     name = "OB + FVG + IFVG (ICT)"
 
     def __init__(self, lookback: int = 120, impulse_mult: float = 1.5, max_zone_age: int = 60,
-                 proximity_atr: float = 0.3, sl_atr_mult: float = 0.5, rr: float = 2.0, min_strength: float = 0.55):
+                 proximity_atr: float = 0.5, sl_atr_mult: float = 0.5, rr: float = 2.0, min_strength: float = 0.40):
         self.lookback = lookback
         self.impulse_mult = impulse_mult
         self.max_zone_age = max_zone_age
@@ -23,6 +23,25 @@ class OrderBlockFVGStrategy(BaseStrategy):
         atr = atr_series(df)
         cur_atr = float(atr.iloc[-1])
         if pd.isna(cur_atr) or cur_atr <= 0: return None
+
+        cur_idx = len(df) - 1
+        cur = df.iloc[-1]
+        price, cur_high, cur_low, cur_open = float(cur["close"]), float(cur["high"]), float(cur["low"]), float(cur["open"])
+
+        obs = detect_order_blocks(df, self.impulse_mult, self.lookback)
+        fvgs = detect_fvgs(df, self.lookback)
+        ifvgs = detect_ifvgs(df, fvgs)
+        entry_zones = obs + ifvgs
+        proximity = self.proximity_atr * cur_atr
+
+        buy_signal = self._check_setup(df, [z for z in entry_zones if z.direction == "bullish"], fvgs, cur_idx, cur_atr, proximity, cur_low, cur_high, float(cur["close"]), cur_open, price, "buy")
+        if buy_signal:
+            return Signal(SignalType.BUY, symbol, timeframe, price, self.name, buy_signal["strength"], buy_signal["sl"], buy_signal["tp"], buy_signal["reason"])
+
+        sell_signal = self._check_setup(df, [z for z in entry_zones if z.direction == "bearish"], fvgs, cur_idx, cur_atr, proximity, cur_low, cur_high, float(cur["close"]), cur_open, price, "sell")
+        if sell_signal:
+            return Signal(SignalType.SELL, symbol, timeframe, price, self.name, sell_signal["strength"], sell_signal["sl"], sell_signal["tp"], sell_signal["reason"])
+        return None
 
         cur_idx = len(df) - 1
         cur = df.iloc[-1]
