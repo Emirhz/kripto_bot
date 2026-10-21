@@ -34,13 +34,21 @@ class OrderBlockFVGStrategy(BaseStrategy):
         entry_zones = obs + ifvgs
         proximity = self.proximity_atr * cur_atr
 
-        buy_signal = self._check_setup(df, [z for z in entry_zones if z.direction == "bullish"], fvgs, cur_idx, cur_atr, proximity, cur_low, cur_high, float(cur["close"]), cur_open, price, "buy")
-        if buy_signal:
-            return Signal(SignalType.BUY, symbol, timeframe, price, self.name, buy_signal["strength"], buy_signal["sl"], buy_signal["tp"], buy_signal["reason"])
+        # EMA 200 Trend Filtresi (Yeni Eklendi)
+        ema200 = df["close"].ewm(span=200, adjust=False).mean().iloc[-1]
 
-        sell_signal = self._check_setup(df, [z for z in entry_zones if z.direction == "bearish"], fvgs, cur_idx, cur_atr, proximity, cur_low, cur_high, float(cur["close"]), cur_open, price, "sell")
-        if sell_signal:
-            return Signal(SignalType.SELL, symbol, timeframe, price, self.name, sell_signal["strength"], sell_signal["sl"], sell_signal["tp"], sell_signal["reason"])
+        # ---------- BUY KURULUMU (EMA 200 ÜSTÜ) ----------
+        if price > ema200:
+            buy_signal = self._check_setup(df, [z for z in entry_zones if z.direction == "bullish"], fvgs, cur_idx, cur_atr, proximity, cur_low, cur_high, float(cur["close"]), cur_open, price, "buy")
+            if buy_signal:
+                return Signal(SignalType.BUY, symbol, timeframe, price, self.name, buy_signal["strength"], buy_signal["sl"], buy_signal["tp"], buy_signal["reason"])
+
+        # ---------- SELL KURULUMU (EMA 200 ALTI) ----------
+        if price < ema200:
+            sell_signal = self._check_setup(df, [z for z in entry_zones if z.direction == "bearish"], fvgs, cur_idx, cur_atr, proximity, cur_low, cur_high, float(cur["close"]), cur_open, price, "sell")
+            if sell_signal:
+                return Signal(SignalType.SELL, symbol, timeframe, price, self.name, sell_signal["strength"], sell_signal["sl"], sell_signal["tp"], sell_signal["reason"])
+                
         return None
 
         cur_idx = len(df) - 1
