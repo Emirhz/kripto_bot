@@ -25,5 +25,5 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SYMBOLS: "SOL/USDT,BNB/USDT,XRP/USDT,ADA/USDT,AVAX/USDT,DOGE/USDT,LINK/USDT,NEAR/USDT,FET/USDT,INJ/USDT,APT/USDT,SUI/USDT,TIA/USDT,SEI/USDT,RNDR/USDT"
           TIMEFRAME: "30m"
-          EXCHANGE: "bybit"
+          EXCHANGE: "okx"
         run: python main.py
