@@ -6,10 +6,10 @@ from strategies.ict_utils import (
 )
 
 class OrderBlockFVGStrategy(BaseStrategy):
-    name = "OB + FVG + Likidite + RSI (Pro Max)"
+    name = "OB + FVG + Likidite + RSI (Scalping 5m)"
 
-    def __init__(self, lookback: int = 120, impulse_mult: float = 1.5, max_zone_age: int = 60,
-                 proximity_atr: float = 0.5, sl_atr_mult: float = 0.5, rr: float = 2.0, min_strength: float = 0.40):
+    def __init__(self, lookback: int = 100, impulse_mult: float = 1.5, max_zone_age: int = 30, # Bölge ömrü 30 mum (2.5 saat) yapıldı
+                 proximity_atr: float = 0.4, sl_atr_mult: float = 0.5, rr: float = 1.5, min_strength: float = 0.40): # RR 1.5'e çekildi (Scalp için daha hızlı hedef)
         self.lookback = lookback
         self.impulse_mult = impulse_mult
         self.max_zone_age = max_zone_age
@@ -24,8 +24,7 @@ class OrderBlockFVGStrategy(BaseStrategy):
         cur_atr = float(atr.iloc[-2])
         if pd.isna(cur_atr) or cur_atr <= 0: return None
 
-        # KRİTİK: Mum kapanışını beklemek için son kapanan mumu (iloc[-2]) kullanıyoruz. 
-        # Böylece 5 dakikada bir kontrol etse bile, 15 dakikalık mum kapanmadan sahte sinyal üretmez.
+        # 5 Dakikalık mumun tam kapanmasını beklemek için iloc[-2]
         cur_idx = len(df) - 2
         cur = df.iloc[-2]
         price, cur_high, cur_low, cur_open = float(cur["close"]), float(cur["high"]), float(cur["low"]), float(cur["open"])
@@ -39,7 +38,7 @@ class OrderBlockFVGStrategy(BaseStrategy):
         # EMA 200 Trend Filtresi
         ema200 = df["close"].ewm(span=200, adjust=False).mean().iloc[-2]
         
-        # RSI 14 Filtresi (Aşırı alım/satım koruması)
+        # RSI 14 Filtresi (Scalping için biraz daha esnek: 45-55 aralığı)
         delta = df['close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -47,14 +46,14 @@ class OrderBlockFVGStrategy(BaseStrategy):
         rsi = 100 - (100 / (1 + rs))
         current_rsi = rsi.iloc[-2]
 
-        # ---------- BUY KURULUMU (EMA 200 ÜSTÜ + RSI 50 ALTI) ----------
-        if price > ema200 and current_rsi < 50:
+        # ---------- BUY KURULUMU ----------
+        if price > ema200 and current_rsi < 55: # 5m için 55'e çektik
             buy_signal = self._check_setup(df, [z for z in entry_zones if z.direction == "bullish"], fvgs, cur_idx, cur_atr, proximity, cur_low, cur_high, float(cur["close"]), cur_open, price, "buy")
             if buy_signal:
                 return Signal(SignalType.BUY, symbol, timeframe, price, self.name, buy_signal["strength"], buy_signal["sl"], buy_signal["tp"], buy_signal["reason"])
 
-        # ---------- SELL KURULUMU (EMA 200 ALTI + RSI 50 ÜSTÜ) ----------
-        if price < ema200 and current_rsi > 50:
+        # ---------- SELL KURULUMU ----------
+        if price < ema200 and current_rsi > 45: # 5m için 45'e çektik
             sell_signal = self._check_setup(df, [z for z in entry_zones if z.direction == "bearish"], fvgs, cur_idx, cur_atr, proximity, cur_low, cur_high, float(cur["close"]), cur_open, price, "sell")
             if sell_signal:
                 return Signal(SignalType.SELL, symbol, timeframe, price, self.name, sell_signal["strength"], sell_signal["sl"], sell_signal["tp"], sell_signal["reason"])
@@ -100,12 +99,13 @@ class OrderBlockFVGStrategy(BaseStrategy):
         strength = 0.5
         if zone.kind == "OB": strength += 0.15
         elif zone.kind == "IFVG": strength += 0.10
-        strength += 0.20 # Likidite bonusu
+        strength += 0.20 
         if overlapping_fvg("bullish" if side == "buy" else "bearish", fvgs, zone.top, zone.bottom): strength += 0.10
         
         strength = min(1.0, strength)
         if strength < self.min_strength: return None
 
+        # Scalping için R:R 1.5 (Daha hızlı kâr al)
         if side == "buy":
             sl = zone.bottom - self.sl_atr_mult * cur_atr
             risk = price - sl
@@ -117,5 +117,5 @@ class OrderBlockFVGStrategy(BaseStrategy):
             if risk <= 0: return None
             tp = price - self.rr * risk
 
-        reason = f"🔥 Süpürme + {zone.kind} {zone.direction} (RSI Onaylı İlk Dokunuş)"
+        reason = f"⚡ Scalp: Süpürme + {zone.kind} {zone.direction} (İlk Dokunuş)"
         return {"strength": strength, "sl": sl, "tp": tp, "reason": reason}
