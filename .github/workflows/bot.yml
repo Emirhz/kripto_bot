@@ -1,12 +1,9 @@
 name: Kripto Sinyal Botu
-
-
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/5 * * * *' # Her 5 dakikada bir çalışır
   workflow_dispatch:
-  push:
-  
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,7 +20,9 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SYMBOLS: "SOL/USDT,BNB/USDT,XRP/USDT,ADA/USDT,AVAX/USDT,DOGE/USDT,LINK/USDT,NEAR/USDT,FET/USDT,INJ/USDT,APT/USDT,SUI/USDT,TIA/USDT,SEI/USDT,RENDER/USDT"
-          TIMEFRAME: "30m"
-          EXCHANGE: "okx"
+          # 45 tane en kaliteli, hacimli coin
+          SYMBOLS: "BTC/USDT,ETH/USDT,BNB/USDT,SOL/USDT,XRP/USDT,ADA/USDT,AVAX/USDT,DOGE/USDT,LINK/USDT,DOT/USDT,NEAR/USDT,APT/USDT,SUI/USDT,SEI/USDT,TIA/USDT,INJ/USDT,FET/USDT,RNDR/USDT,ARB/USDT,OP/USDT,IMX/USDT,STX/USDT,RUNE/USDT,ATOM/USDT,LTC/USDT,BCH/USDT,FIL/USDT,UNI/USDT,GRT/USDT,ALGO/USDT,VET/USDT,SAND/USDT,MANA/USDT,PEPE/USDT,SHIB/USDT,WIF/USDT,FLOKI/USDT,BONK/USDT,JUP/USDT,PYTH/USDT,ENA/USDT,ORDI/USDT,TAO/USDT,ICP/USDT,AAVE/USDT"
+          TIMEFRAME: "15m" # Grafik 15 dakikalık
+          EXCHANGE: "binance"
         run: python main.py
+
