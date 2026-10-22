@@ -6,7 +6,7 @@ from strategies.ict_utils import (
 )
 
 class OrderBlockFVGStrategy(BaseStrategy):
-    name = "Saf Order Block (15m)"
+    name = "Saf Order Block (Anlık Giriş)"
 
     def __init__(self, lookback: int = 100, impulse_mult: float = 1.5, max_zone_age: int = 60,
                  proximity_atr: float = 0.3, sl_atr_mult: float = 0.5, rr: float = 2.0):
@@ -20,12 +20,12 @@ class OrderBlockFVGStrategy(BaseStrategy):
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
         if len(df) < 200: return None
         atr = atr_series(df)
-        cur_atr = float(atr.iloc[-2])
+        cur_atr = float(atr.iloc[-1]) # ANLIK ATR
         if pd.isna(cur_atr) or cur_atr <= 0: return None
 
-        # 15 dakikalık mumun tam kapanmasını bekle
-        cur_idx = len(df) - 2
-        cur = df.iloc[-2]
+        # ANLIK FİYATI VE MUMU KULLAN (iloc[-1] yapıldı)
+        cur_idx = len(df) - 1
+        cur = df.iloc[-1]
         price, cur_high, cur_low, cur_open, cur_close = float(cur["close"]), float(cur["high"]), float(cur["low"]), float(cur["open"]), float(cur["close"])
 
         obs = detect_order_blocks(df, self.impulse_mult, self.lookback)
@@ -34,8 +34,8 @@ class OrderBlockFVGStrategy(BaseStrategy):
         entry_zones = obs + ifvgs
         proximity = self.proximity_atr * cur_atr
 
-        # EMA 200 Trend Filtresi
-        ema200 = df["close"].ewm(span=200, adjust=False).mean().iloc[-2]
+        # EMA 200 Trend Filtresi (Anlık)
+        ema200 = df["close"].ewm(span=200, adjust=False).mean().iloc[-1]
 
         # ---------- BUY KURULUMU (Trend Yukarı) ----------
         if price > ema200:
@@ -57,13 +57,12 @@ class OrderBlockFVGStrategy(BaseStrategy):
         valid = []
         for z in zones:
             age = cur_idx - z.start_idx
-            if age < 2 or age > self.max_zone_age: continue # 60 mumdan eski olmasın
-            if not zone_intact(df, z, cur_idx): continue # Kırılmamış olsun
+            if age < 2 or age > self.max_zone_age: continue 
+            if not zone_intact(df, z, cur_idx): continue 
             valid.append(z)
 
         if not valid: return None
 
-        # Fiyata en yakın bölgeyi seç
         if side == "buy":
             candidates = [z for z in valid if z.top <= price + proximity]
             candidates.sort(key=lambda z: abs(z.top - price))
@@ -74,7 +73,7 @@ class OrderBlockFVGStrategy(BaseStrategy):
         if not candidates: return None
         zone = candidates[0]
 
-        # Bölgeye değdi mi ve mum onayı (Yeşil/Kırmızı) var mı?
+        # Bölgeye değdi mi ve anlık mum yeşil/kırmızı mı?
         if side == "buy":
             touched = cur_low <= zone.top + proximity and cur_low >= zone.bottom - proximity
             body_confirm = cur_close > cur_open
@@ -84,10 +83,8 @@ class OrderBlockFVGStrategy(BaseStrategy):
 
         if not (touched and body_confirm): return None
         
-        # Sadece İLK dokunuş
         if not first_touch(df, zone, cur_idx): return None
 
-        # Stop ve Hedef Belirleme
         if side == "buy":
             sl = zone.bottom - self.sl_atr_mult * cur_atr
             risk = price - sl
@@ -99,5 +96,5 @@ class OrderBlockFVGStrategy(BaseStrategy):
             if risk <= 0: return None
             tp = price - self.rr * risk
 
-        reason = f"OB {zone.direction} İlk Dokunuş ({zone.bottom:.4g} - {zone.top:.4g})"
+        reason = f"⚡ ANLIK GİRİŞ: OB {zone.direction} ({zone.bottom:.4g} - {zone.top:.4g})"
         return {"sl": sl, "tp": tp, "reason": reason}
