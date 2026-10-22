@@ -2,7 +2,7 @@ import pandas as pd
 from strategies.base import BaseStrategy, Signal, SignalType
 from strategies.ict_utils import atr_series
 
-class MomentumScalpStrategy(BaseStrategy):
+class OrderBlockFVGStrategy(BaseStrategy):
     name = "EMA Kesisimi + Hacim + RSI (Momentum Scalp)"
 
     def __init__(self, sl_atr_mult: float = 1.0, rr: float = 1.5):
@@ -40,12 +40,8 @@ class MomentumScalpStrategy(BaseStrategy):
         if pd.isna(cur_atr) or cur_atr <= 0: return None
 
         # --- SİNYAL KONTROLLERİ ---
-        
-        # Kesişim Durumları
         cross_up = (ema9.iloc[-3] <= ema21.iloc[-3]) and (ema9.iloc[-2] > ema21.iloc[-2])
         cross_down = (ema9.iloc[-3] >= ema21.iloc[-3]) and (ema9.iloc[-2] < ema21.iloc[-2])
-        
-        # Hacim Onayı (Ortalamanın %50 üzerinde mi?)
         volume_spike = cur_volume > (vol_ma * 1.5)
 
         # ---------- BUY KURULUMU ----------
