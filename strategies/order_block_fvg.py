@@ -6,7 +6,7 @@ from strategies.ict_utils import (
 )
 
 class OrderBlockFVGStrategy(BaseStrategy):
-    name = "OB + FVG + IFVG (ICT Pro)"
+    name = "OB + FVG + Likidite + RSI (Pro Max)"
 
     def __init__(self, lookback: int = 120, impulse_mult: float = 1.5, max_zone_age: int = 60,
                  proximity_atr: float = 0.5, sl_atr_mult: float = 0.5, rr: float = 2.0, min_strength: float = 0.40):
@@ -21,11 +21,13 @@ class OrderBlockFVGStrategy(BaseStrategy):
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
         if len(df) < 200: return None
         atr = atr_series(df)
-        cur_atr = float(atr.iloc[-1])
+        cur_atr = float(atr.iloc[-2])
         if pd.isna(cur_atr) or cur_atr <= 0: return None
 
-        cur_idx = len(df) - 1
-        cur = df.iloc[-1]
+        # KRİTİK: Mum kapanışını beklemek için son kapanan mumu (iloc[-2]) kullanıyoruz. 
+        # Böylece 5 dakikada bir kontrol etse bile, 15 dakikalık mum kapanmadan sahte sinyal üretmez.
+        cur_idx = len(df) - 2
+        cur = df.iloc[-2]
         price, cur_high, cur_low, cur_open = float(cur["close"]), float(cur["high"]), float(cur["low"]), float(cur["open"])
 
         obs = detect_order_blocks(df, self.impulse_mult, self.lookback)
@@ -35,16 +37,24 @@ class OrderBlockFVGStrategy(BaseStrategy):
         proximity = self.proximity_atr * cur_atr
 
         # EMA 200 Trend Filtresi
-        ema200 = df["close"].ewm(span=200, adjust=False).mean().iloc[-1]
+        ema200 = df["close"].ewm(span=200, adjust=False).mean().iloc[-2]
+        
+        # RSI 14 Filtresi (Aşırı alım/satım koruması)
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        current_rsi = rsi.iloc[-2]
 
-        # ---------- BUY KURULUMU (EMA 200 ÜSTÜ) ----------
-        if price > ema200:
+        # ---------- BUY KURULUMU (EMA 200 ÜSTÜ + RSI 50 ALTI) ----------
+        if price > ema200 and current_rsi < 50:
             buy_signal = self._check_setup(df, [z for z in entry_zones if z.direction == "bullish"], fvgs, cur_idx, cur_atr, proximity, cur_low, cur_high, float(cur["close"]), cur_open, price, "buy")
             if buy_signal:
                 return Signal(SignalType.BUY, symbol, timeframe, price, self.name, buy_signal["strength"], buy_signal["sl"], buy_signal["tp"], buy_signal["reason"])
 
-        # ---------- SELL KURULUMU (EMA 200 ALTI) ----------
-        if price < ema200:
+        # ---------- SELL KURULUMU (EMA 200 ALTI + RSI 50 ÜSTÜ) ----------
+        if price < ema200 and current_rsi > 50:
             sell_signal = self._check_setup(df, [z for z in entry_zones if z.direction == "bearish"], fvgs, cur_idx, cur_atr, proximity, cur_low, cur_high, float(cur["close"]), cur_open, price, "sell")
             if sell_signal:
                 return Signal(SignalType.SELL, symbol, timeframe, price, self.name, sell_signal["strength"], sell_signal["sl"], sell_signal["tp"], sell_signal["reason"])
@@ -85,15 +95,12 @@ class OrderBlockFVGStrategy(BaseStrategy):
             sweep_confirmed = cur_high > recent_high and cur_close < recent_high
 
         if not (touched and body_confirm and sweep_confirmed): return None
-
         if not first_touch(df, zone, cur_idx): return None
 
         strength = 0.5
         if zone.kind == "OB": strength += 0.15
         elif zone.kind == "IFVG": strength += 0.10
-        
-        strength += 0.20 # Likidite süpürmesi bonusu
-        
+        strength += 0.20 # Likidite bonusu
         if overlapping_fvg("bullish" if side == "buy" else "bearish", fvgs, zone.top, zone.bottom): strength += 0.10
         
         strength = min(1.0, strength)
@@ -110,5 +117,5 @@ class OrderBlockFVGStrategy(BaseStrategy):
             if risk <= 0: return None
             tp = price - self.rr * risk
 
-        reason = f"🔥 Likidite Süpürmesi + {zone.kind} {zone.direction} (İlk Dokunuş)"
+        reason = f"🔥 Süpürme + {zone.kind} {zone.direction} (RSI Onaylı İlk Dokunuş)"
         return {"strength": strength, "sl": sl, "tp": tp, "reason": reason}
