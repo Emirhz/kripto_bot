@@ -1,26 +1,10 @@
-name: Kripto Sinyal Botu
+name: Kripto Sinyal Botu (Devre Dışı)
 on:
-  schedule:
-    - cron: '*/5 * * * *' # Her 5 dk kontrol et (15dk mum kapanışını kaçırmamak için)
-  workflow_dispatch:
+  workflow_dispatch: # Sadece elle çalışır, otomatik çalışmaz
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Kodu Çek
-        uses: actions/checkout@v3
-      - name: Python Kur
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      - name: Kütüphaneleri Yükle
-        run: pip install -r requirements.txt
-      - name: Botu Çalıştır
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SYMBOLS: "BTC/USDT,ETH/USDT,BNB/USDT,SOL/USDT,XRP/USDT,ADA/USDT,AVAX/USDT,DOGE/USDT,LINK/USDT,DOT/USDT,NEAR/USDT,APT/USDT,SUI/USDT,SEI/USDT,TIA/USDT,INJ/USDT,FET/USDT,ARB/USDT,OP/USDT,IMX/USDT,STX/USDT,ATOM/USDT,LTC/USDT,BCH/USDT,FIL/USDT,UNI/USDT,GRT/USDT,ALGO/USDT,SAND/USDT,MANA/USDT,PEPE/USDT,SHIB/USDT,WIF/USDT,FLOKI/USDT,BONK/USDT,JUP/USDT,PYTH/USDT,ENA/USDT,ORDI/USDT,TAO/USDT,ICP/USDT,AAVE/USDT"
-          TIMEFRAME: "15m" # 15 DAKİKA
-          EXCHANGE: "mexc" # MEXC: Veriyi hatasız çeker, bizi engellemez
-        run: python main.py
+      - name: Bilgi
+        run: echo "Bu bot artık Render uzerinde calisiyor."
