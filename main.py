@@ -53,8 +53,14 @@ async def main():
     log.info("Tarama tamamlandı.")
 
 if __name__ == "__main__":
-    # Arka planda web sunucusunu başlat (Render uyumasın diye)
+    # Arka planda web sunucusunu başlat (Render portu açık kalsın diye)
     threading.Thread(target=run_web_server, daemon=True).start()
     
-    # Botun ana döngüsünü çalıştır
-    asyncio.run(main())
+    # Botun hiç durmaması için sonsuz döngü
+    async def run_forever():
+        while True:
+            await main()
+            log.info("Tarama bitti, 5 dakika bekleniyor...")
+            await asyncio.sleep(300) # 300 saniye = 5 dakika bekle, sonra tekrar tara
+
+    asyncio.run(run_forever())
