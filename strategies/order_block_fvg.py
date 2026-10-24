@@ -19,7 +19,7 @@ class OrderBlockFVGStrategy(BaseStrategy):
         if len(df_4h) < 50 or len(df_1h) < 50: return None
 
         # --- 1. ADIM: YÖN (4 SAATLİK TREND) ---
-        ema200_4h = df_4h["close"].ewm(span=200, adjust=False).mean().iloc[-1]
+        ema200_4h = df_4h["close"].ewm(span=50, adjust=False).mean().iloc[-1]
         price_4h = df_4h["close"].iloc[-1]
         
         trend_up = price_4h > ema200_4h
