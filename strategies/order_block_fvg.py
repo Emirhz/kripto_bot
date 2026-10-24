@@ -13,8 +13,8 @@ class OrderBlockFVGStrategy(BaseStrategy):
         if len(df) < 100: return None
         
         # Veriyi 4 Saatlik ve 1 Saatlik dilimlere çeviriyoruz
-        df_4h = df.resample('4H', on='timestamp').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).dropna()
-        df_1h = df.resample('1H', on='timestamp').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).dropna()
+        df_4h = df.resample('4h', on='timestamp').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).dropna()
+        df_1h = df.resample('1h', on='timestamp').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).dropna()
         
         if len(df_4h) < 50 or len(df_1h) < 50: return None
 
