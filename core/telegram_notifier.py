@@ -6,7 +6,11 @@ from strategies.base import Signal, SignalType
 
 class TelegramNotifier:
     def __init__(self):
-        self.bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
+        # Token'ın başındaki ve sonundaki görünmez boşlukları .strip() ile temizliyoruz
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        if not token:
+            log.error("KRİTİK HATA: TELEGRAM_BOT_TOKEN Render'da bulunamadı!")
+        self.bot = Bot(token=token)
 
     def _format(self, s: Signal) -> str:
         emoji = "🟢" if s.type == SignalType.BUY else "🔴"
@@ -28,10 +32,12 @@ class TelegramNotifier:
 
     async def send(self, signal: Signal):
         try:
+            chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
             await self.bot.send_message(
-                chat_id=os.getenv("TELEGRAM_CHAT_ID"),
+                chat_id=chat_id,
                 text=self._format(signal),
                 parse_mode=ParseMode.MARKDOWN
             )
+            log.info(f"Sinyal gönderildi: {signal.symbol}")
         except Exception as e:
-            log.error(f"Telegram hatası: {e}")
+            log.error(f"Telegram gönderme hatası: {e}")
