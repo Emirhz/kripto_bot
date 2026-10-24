@@ -269,3 +269,4 @@ class OrderBlockFVGStrategy(BaseStrategy):
             strength=min(score / 10, 1.0),
             stop_loss=sl, take_profit=tp,
             reason=f"{emoji} Puan {score}/10 | 4H yapı + 1H {z['kind']} tepkisi"
+        )
