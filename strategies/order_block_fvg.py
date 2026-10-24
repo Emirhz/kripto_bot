@@ -116,7 +116,7 @@ def _build_zones(d: pd.DataFrame, delta: pd.Timedelta) -> list:
 class OrderBlockFVGStrategy(BaseStrategy):
     name = "ICT Puanlı (4H Yapı + 1H OB/FVG/IFVG + 15m Tepki)"
 
-    def __init__(self, sl_atr_mult: float = 1.0, rr: float = 2.0):
+    def __init__(self, sl_atr_mult: float = 1.5, rr: float = 2.0):
         self.sl_atr_mult = sl_atr_mult
         self.rr = rr
 
@@ -152,7 +152,7 @@ class OrderBlockFVGStrategy(BaseStrategy):
         c_high = float(cur["high"])
         c_low = float(cur["low"])
 
-        atr = float(_atr(df).iloc[-1])
+        atr = float(_atr(d1).iloc[-1])
         if pd.isna(atr) or atr <= 0:
             return None
 
