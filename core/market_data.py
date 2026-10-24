@@ -12,6 +12,10 @@ class MarketData:
         try:
             raw = await self.exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
             df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
+                        df = pd.DataFrame(raw, columns=[...])
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+            return df
+
             return df
         except Exception as e:
             log.error(f"Hata: {e}")
