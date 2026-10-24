@@ -8,7 +8,7 @@ class MarketData:
         exchange_cls = getattr(ccxt, os.getenv("EXCHANGE", "binance"))
         self.exchange = exchange_cls({"enableRateLimit": True})
 
-    async def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500) -> pd.DataFrame:
+    async def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 1000) -> pd.DataFrame:
         try:
             raw = await self.exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
             df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
