@@ -1,6 +1,7 @@
 import pandas as pd
 from strategies.base import BaseStrategy, Signal, SignalType
 
+
 # Sinyal için gereken minimum puan (en fazla 10).
 # Çok sinyal geliyorsa yükselt (7), hiç gelmiyorsa düşür (5).
 MIN_SCORE = 7
