@@ -11,6 +11,7 @@ from strategies.order_block_fvg import OrderBlockFVGStrategy
 from core.market_data import MarketData
 from core.telegram_notifier import TelegramNotifier
 from core.logger import log
+from market_regime import get_btc_regime, signal_allowed
 
 # --- RENDER İÇİN WEB SUNUCUSU (BOTU UYUTMAZ) ---
 app = Flask(__name__)
@@ -34,6 +35,16 @@ async def main():
     notifier = TelegramNotifier()
     market = MarketData()
 
+    # BTC yönünü bir kez hesapla (tüm coinler için ortak filtre)
+    btc_regime = "NEUTRAL"
+    try:
+        btc_df = await market.fetch_ohlcv("BTC/USDT", timeframe)
+        if not btc_df.empty:
+            btc_regime = get_btc_regime(btc_df)
+    except Exception as e:
+        log.error(f"BTC yönü alınamadı: {e}")
+    log.info(f"BTC yönü: {btc_regime}")
+
     for symbol in symbols:
         symbol = symbol.strip()
         log.info(f"Taranıyor: {symbol}")
@@ -42,8 +53,11 @@ async def main():
             if not df.empty:
                 signal = strategy.analyze(df, symbol, timeframe)
                 if signal:
-                    log.info(f"SİNYAL BULUNDU: {symbol}")
-                    await notifier.send(signal)
+                    if not signal_allowed(signal, btc_regime):
+                        log.info(f"Sinyal engellendi (BTC {btc_regime}): {symbol}")
+                    else:
+                        log.info(f"SİNYAL BULUNDU: {symbol}")
+                        await notifier.send(signal)
                 else:
                     log.info(f"Sinyal yok: {symbol}")
         except Exception as e:
