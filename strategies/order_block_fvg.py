@@ -5,7 +5,6 @@ AGG = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": 
 _last_signal = {}
 
 def _clean_old_signals():
-    """Bellek sızıntısını önlemek için eski sinyal kayıtlarını temizler."""
     global _last_signal
     now = pd.Timestamp.now()
     _last_signal = {
@@ -14,7 +13,6 @@ def _clean_old_signals():
     }
 
 def _resample_closed(df: pd.DataFrame, rule: str, delta: pd.Timedelta) -> pd.DataFrame:
-    """15m veriden üst zaman dilimi üretir, kapanmamış son mumu atar."""
     if "timestamp" not in df.columns or len(df) == 0:
         return pd.DataFrame()
     try:
@@ -40,30 +38,30 @@ def _atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
 
 
 # ==========================================
-# STRATEJİ A: Order Block & Likidite Süpürmesi
+# STRATEJİ A: Sertleştirilmiş Order Block & Sweep
 # ==========================================
 class StrategyA_OrderBlock(BaseStrategy):
-    name = "Strateji A (OB & Likidite Sweep)"
+    name = "Elit Strateji A (Sert OB & Sweep)"
 
-    def __init__(self, sl_atr_mult: float = 1.5, rr: float = 2.0):
+    def __init__(self, sl_atr_mult: float = 1.8, rr: float = 2.5):
         self.sl_atr_mult = sl_atr_mult
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
-        if len(df) < 200:
+        if len(df) < 250:
             return None
         _clean_old_signals()
         
         df = df.iloc[:-1].reset_index(drop=True)
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d1) < 40:
+        if len(d1) < 50:
             return None
 
-        # Cooldown kontrolü (Strateji bazlı)
+        # Cooldown süresini 12 saate çıkarıyoruz ki aynı coin sürekli sinyal üretmesin
         key = f"{symbol}_A"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 14400: # 4 saat
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 43200: # 12 saat
             return None
 
         price = float(cur["close"])
@@ -71,7 +69,6 @@ class StrategyA_OrderBlock(BaseStrategy):
         c_high = float(cur["high"])
         c_low = float(cur["low"])
 
-        # 1H Order Block Tespiti
         o = d1["open"].values
         h = d1["high"].values
         l = d1["low"].values
@@ -79,13 +76,14 @@ class StrategyA_OrderBlock(BaseStrategy):
         n = len(d1)
         
         ob_zone = None
-        for i in range(max(2, n - 30), n):
+        for i in range(max(2, n - 20), n):
             body = abs(c[i] - o[i])
             avg_body = pd.Series(abs(c - o)).rolling(20).mean().iloc[i]
-            if not pd.isna(avg_body) and body > 1.4 * avg_body:
-                if c[i - 1] < o[i - 1] and c[i] > h[i - 1]: # Bullish OB
+            # Mum boyutu ortalamanın 1.6 katı olmalı (Daha sert bir kurumsal hareket)
+            if not pd.isna(avg_body) and body > 1.6 * avg_body:
+                if c[i - 1] < o[i - 1] and c[i] > h[i - 1]:
                     ob_zone = {"dir": "bullish", "top": h[i-1], "bottom": l[i-1]}
-                elif c[i - 1] > o[i - 1] and c[i] < l[i - 1]: # Bearish OB
+                elif c[i - 1] > o[i - 1] and c[i] < l[i - 1]:
                     ob_zone = {"dir": "bearish", "top": h[i-1], "bottom": l[i-1]}
 
         if not ob_zone:
@@ -95,9 +93,13 @@ class StrategyA_OrderBlock(BaseStrategy):
         if pd.isna(atr) or atr <= 0:
             return None
 
-        # Fiyat OB bölgesine değdi mi ve tepki verdi mi?
         top, bottom, direction = ob_zone["top"], ob_zone["bottom"], ob_zone["dir"]
         if not (c_low <= top and c_high >= bottom):
+            return None
+
+        # Hacim filtresi şart (Ortalamanın en az 1.5 katı hacim patlaması)
+        vol_avg = df["volume"].iloc[-20:-1].mean()
+        if float(cur["volume"]) < vol_avg * 1.5:
             return None
 
         if direction == "bullish" and price > c_open:
@@ -107,8 +109,8 @@ class StrategyA_OrderBlock(BaseStrategy):
             tp = price + (risk * self.rr)
             _last_signal[key] = now_ts
             return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
-                          strategy_name=self.name, strength=0.8, stop_loss=sl, take_profit=tp,
-                          reason="🟢 Strateji A: 1H Order Block & Boğa Tepkisi")
+                          strategy_name=self.name, strength=0.9, stop_loss=sl, take_profit=tp,
+                          reason="🟢 Elit A: Güçlü 1H OB + Hacim Patlaması")
 
         elif direction == "bearish" and price < c_open:
             sl = top + (atr * self.sl_atr_mult)
@@ -117,35 +119,35 @@ class StrategyA_OrderBlock(BaseStrategy):
             tp = price - (risk * self.rr)
             _last_signal[key] = now_ts
             return Signal(type=SignalType.SELL, symbol=symbol, timeframe=timeframe, price=price,
-                          strategy_name=self.name, strength=0.8, stop_loss=sl, take_profit=tp,
-                          reason="🔴 Strateji A: 1H Order Block & Ayı Tepkisi")
+                          strategy_name=self.name, strength=0.9, stop_loss=sl, take_profit=tp,
+                          reason="🔴 Elit A: Güçlü 1H OB + Hacim Patlaması")
         return None
 
 
 # ==========================================
-# STRATEJİ B: FVG & iFVG (Dengesizlik)
+# STRATEJİ B: Sertleştirilmiş FVG Dengesizlik
 # ==========================================
 class StrategyB_FVG(BaseStrategy):
-    name = "Strateji B (FVG Dengesizlik)"
+    name = "Elit Strateji B (Derin FVG)"
 
-    def __init__(self, sl_atr_mult: float = 1.5, rr: float = 2.0):
+    def __init__(self, sl_atr_mult: float = 1.8, rr: float = 2.5):
         self.sl_atr_mult = sl_atr_mult
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
-        if len(df) < 200:
+        if len(df) < 250:
             return None
         _clean_old_signals()
 
         df = df.iloc[:-1].reset_index(drop=True)
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d1) < 30:
+        if len(d1) < 40:
             return None
 
         key = f"{symbol}_B"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 14400:
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 43200:
             return None
 
         price = float(cur["close"])
@@ -158,11 +160,10 @@ class StrategyB_FVG(BaseStrategy):
         n = len(d1)
 
         fvg_zone = None
-        # Son mumlarda FVG arayalım
-        for i in range(max(2, n - 20), n):
-            if l[i] > h[i - 2]: # Bullish FVG
+        for i in range(max(2, n - 15), n):
+            if l[i] > h[i - 2]:
                 fvg_zone = {"dir": "bullish", "top": l[i], "bottom": h[i - 2]}
-            elif h[i] < l[i - 2]: # Bearish FVG
+            elif h[i] < l[i - 2]:
                 fvg_zone = {"dir": "bearish", "top": l[i - 2], "bottom": h[i]}
 
         if not fvg_zone:
@@ -175,6 +176,11 @@ class StrategyB_FVG(BaseStrategy):
         if not (c_low <= top and c_high >= bottom):
             return None
 
+        # FVG için de hacim onayı şart
+        vol_avg = df["volume"].iloc[-20:-1].mean()
+        if float(cur["volume"]) < vol_avg * 1.5:
+            return None
+
         if direction == "bullish" and price > c_open:
             sl = bottom - (atr * self.sl_atr_mult)
             risk = price - sl
@@ -182,8 +188,8 @@ class StrategyB_FVG(BaseStrategy):
             tp = price + (risk * self.rr)
             _last_signal[key] = now_ts
             return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
-                          strategy_name=self.name, strength=0.8, stop_loss=sl, take_profit=tp,
-                          reason="🟢 Strateji B: 1H FVG Boşluk Doldurma Tepkisi")
+                          strategy_name=self.name, strength=0.9, stop_loss=sl, take_profit=tp,
+                          reason="🟢 Elit B: 1H FVG Boşluk Doldurma + Hacim Onayı")
 
         elif direction == "bearish" and price < c_open:
             sl = top + (atr * self.sl_atr_mult)
@@ -192,67 +198,70 @@ class StrategyB_FVG(BaseStrategy):
             tp = price - (risk * self.rr)
             _last_signal[key] = now_ts
             return Signal(type=SignalType.SELL, symbol=symbol, timeframe=timeframe, price=price,
-                          strategy_name=self.name, strength=0.8, stop_loss=sl, take_profit=tp,
-                          reason="🔴 Strateji B: 1H FVG Boşluk Doldurma Tepkisi")
+                          strategy_name=self.name, strength=0.9, stop_loss=sl, take_profit=tp,
+                          reason="🔴 Elit B: 1H FVG Boşluk Doldurma + Hacim Onayı")
         return None
 
 
 # ==========================================
-# STRATEJİ C: 4H Trend & Momentum Devamı
+# STRATEJİ C: 4H Trend & EMA 200 Majör Kırılım
 # ==========================================
 class StrategyC_TrendBreak(BaseStrategy):
-    name = "Strateji C (4H Trend & Momentum)"
+    name = "Elit Strateji C (4H Trend & EMA200)"
 
-    def __init__(self, sl_atr_mult: float = 1.8, rr: float = 2.0):
+    def __init__(self, sl_atr_mult: float = 2.0, rr: float = 3.0):
         self.sl_atr_mult = sl_atr_mult
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
-        if len(df) < 200:
+        if len(df) < 250:
             return None
         _clean_old_signals()
 
         df = df.iloc[:-1].reset_index(drop=True)
         d4 = _resample_closed(df, "4h", pd.Timedelta(hours=4))
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d4) < 15 or len(d1) < 50:
+        if len(d4) < 20 or len(d1) < 100:
             return None
 
         key = f"{symbol}_C"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 14400:
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 43200:
             return None
 
         price = float(cur["close"])
         
-        # 4H Yapı Kararı (Basit Swing Yönü)
+        # 4H Güçlü Yapı
         h4_c = d4["close"].values
-        h4_trend = 1 if h4_c[-1] > h4_c[-3] else -1
+        h4_trend = 1 if h4_c[-1] > h4_c[-4] else -1
 
-        # 1H EMA 50 Filtresi
-        ema50 = float(d1["close"].ewm(span=50, adjust=False).mean().iloc[-1])
+        # 1H EMA 200 (Majör Trend Filtresi - Profesyoneller EMA 200 kullanır)
+        ema200 = float(d1["close"].ewm(span=200, adjust=False).mean().iloc[-1])
         atr = float(_atr(d1).iloc[-1])
         if pd.isna(atr) or atr <= 0: return None
 
-        # Trend ve Momentum Uyumu
-        if h4_trend == 1 and price > ema50 and float(cur["volume"]) > float(df["volume"].iloc[-20:-1].mean() * 1.4):
+        vol_avg = df["volume"].iloc[-20:-1].mean()
+        is_volume_spike = float(cur["volume"]) > (vol_avg * 1.8)
+
+        # Şartlar çok daha sert: 4H trend + 1H EMA200 üstü/altı + devasa hacim
+        if h4_trend == 1 and price > ema200 and is_volume_spike:
             sl = price - (atr * self.sl_atr_mult)
             risk = price - sl
             if risk <= 0: return None
             tp = price + (risk * self.rr)
             _last_signal[key] = now_ts
             return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
-                          strategy_name=self.name, strength=0.85, stop_loss=sl, take_profit=tp,
-                          reason="🟢 Strateji C: 4H Trend Devamı + Hacim Patlaması")
+                          strategy_name=self.name, strength=0.95, stop_loss=sl, take_profit=tp,
+                          reason="🟢 Elit C: 4H Majör Trend + EMA200 + Dev Hacim")
 
-        elif h4_trend == -1 and price < ema50 and float(cur["volume"]) > float(df["volume"].iloc[-20:-1].mean() * 1.4):
+        elif h4_trend == -1 and price < ema200 and is_volume_spike:
             sl = price + (atr * self.sl_atr_mult)
             risk = sl - price
             if risk <= 0: return None
             tp = price - (risk * self.rr)
             _last_signal[key] = now_ts
             return Signal(type=SignalType.SELL, symbol=symbol, timeframe=timeframe, price=price,
-                          strategy_name=self.name, strength=0.85, stop_loss=sl, take_profit=tp,
-                          reason="🔴 Strateji C: 4H Düşüş Trendi + Hacim Patlaması")
+                          strategy_name=self.name, strength=0.95, stop_loss=sl, take_profit=tp,
+                          reason="🔴 Elit C: 4H Majör Düşüş Trendi + EMA200 + Dev Hacim")
         return None
