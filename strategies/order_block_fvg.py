@@ -152,12 +152,12 @@ class StrategyB_FVG(BaseStrategy):
 
 
 # =====================================================================
-# STRATEJİ C: Volume Profile POC Seviye Tepkisi
+# STRATEJİ C (YENİ): Orderflow Imbalance & Delta Reversal (Görsel 8 Mantığı)
 # =====================================================================
 class StrategyC_TrendBreak(BaseStrategy):
-    name = "Elit C (Volume Profile POC Tepkisi)"
+    name = "Elit C (Orderflow Imbalance & Delta)"
 
-    def __init__(self, sl_atr_mult: float = 2.0, rr: float = 3.0):
+    def __init__(self, sl_atr_mult: float = 1.8, rr: float = 2.5):
         self.sl_atr_mult = sl_atr_mult
         self.rr = rr
 
@@ -166,42 +166,51 @@ class StrategyC_TrendBreak(BaseStrategy):
         _clean_old_signals()
         df = df.iloc[:-1].reset_index(drop=True)
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d1) < 40: return None
+        if len(d1) < 30: return None
 
         key = f"{symbol}_C"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
         if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 7200: return None
 
-        poc = ((d1["high"] + d1["low"] + d1["close"]) / 3 * d1["volume"]).sum() / d1["volume"].sum()
         price = float(cur["close"])
+        c_open = float(cur["open"])
         atr = float(_atr(d1).iloc[-1])
         if pd.isna(atr) or atr <= 0: return None
 
-        if abs(price - poc) / poc < 0.015 and float(cur["volume"]) > (df["volume"].iloc[-15:-1].mean() * 1.25):
-            if price > float(cur["open"]):
-                sl = price - (atr * self.sl_atr_mult)
+        # Agresif hacim ve delta yığılması simülasyonu (Fiyatın kritik seviyeyi hacimle delip dönmesi)
+        vol_series = df["volume"]
+        vol_spike = float(cur["volume"]) > (vol_series.iloc[-20:-1].mean() * 1.8)
+
+        # Uzun iğneli ve yüksek hacimli dönüş mumu (Reversal footprint)
+        body_size = abs(price - c_open)
+        total_range = float(cur["high"]) - float(cur["low"])
+        is_pinbar = total_range > (3 * body_size) if body_size > 0 else False
+
+        if vol_spike and is_pinbar:
+            if price > c_open: # Alıcı baskılı dönüş
+                sl = float(cur["low"]) - (atr * 0.5)
                 risk = price - sl
                 if risk <= 0: return None
                 tp = price + (risk * self.rr)
                 _last_signal[key] = now_ts
                 return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
                               strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
-                              reason="🟢 Elit C: Volume Profile POC Seviyesinden Sert Tepki")
-            elif price < float(cur["open"]):
-                sl = price + (atr * self.sl_atr_mult)
+                              reason="🟢 Elit C: Orderflow Delta Reversal + Alıcı Baskısı")
+            elif price < c_open: # Satıcı baskılı dönüş
+                sl = float(cur["high"]) + (atr * 0.5)
                 risk = sl - price
                 if risk <= 0: return None
                 tp = price - (risk * self.rr)
                 _last_signal[key] = now_ts
                 return Signal(type=SignalType.SELL, symbol=symbol, timeframe=timeframe, price=price,
                               strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
-                              reason="🔴 Elit C: Volume Profile POC Seviyesinden Sert Tepki")
+                              reason="🔴 Elit C: Orderflow Delta Reversal + Satıcı Baskısı")
         return None
 
 
 # =====================================================================
-# STRATEJİ D (YENİ): Market Structure Break (BOS / ChoCH Yapı Kırılımı)
+# STRATEJİ D: Market Structure Break (BOS / ChoCH Yapı Kırılımı)
 # =====================================================================
 class StrategyD_MarketStructure(BaseStrategy):
     name = "Elit D (BOS & Yapı Kırılımı)"
@@ -226,12 +235,9 @@ class StrategyD_MarketStructure(BaseStrategy):
         atr = float(_atr(d1).iloc[-1])
         if pd.isna(atr) or atr <= 0: return None
 
-        # Son 20 mumun en yüksek ve düşük seviyelerinin kırılması (Break of Structure)
         prev_high = d1["high"].iloc[-21:-1].max()
         prev_low = d1["low"].iloc[-21:-1].min()
-
-        vol_avg = df["volume"].iloc[-15:-1].mean()
-        is_vol = float(cur["volume"]) > (vol_avg * 1.3)
+        is_vol = float(cur["volume"]) > (df["volume"].iloc[-15:-1].mean() * 1.3)
 
         if price > prev_high and is_vol and price > float(cur["open"]):
             sl = price - (atr * self.sl_atr_mult)
@@ -255,7 +261,7 @@ class StrategyD_MarketStructure(BaseStrategy):
 
 
 # =====================================================================
-# STRATEJİ E (YENİ): Liquidity Sweep & Stop Hunt (Likidite Avı)
+# STRATEJİ E: Liquidity Sweep & Stop Hunt (Likidite Avı)
 # =====================================================================
 class StrategyE_LiquiditySweep(BaseStrategy):
     name = "Elit E (Likidite Sweep / Stop Avı)"
@@ -281,11 +287,9 @@ class StrategyE_LiquiditySweep(BaseStrategy):
         atr = float(_atr(d1).iloc[-1])
         if pd.isna(atr) or atr <= 0: return None
 
-        # Son 20 mumun tepe ve diplerinin iğne ile alınıp içeri fiyatın geri çekilmesi
         recent_high = d1["high"].iloc[-21:-1].max()
         recent_low = d1["low"].iloc[-21:-1].min()
 
-        # Boğa Sweep: Fiyat dip altını iğneleyip (sweep) hızlıca yukarı kapattıysa
         if c_low < recent_low and price > recent_low and price > float(cur["open"]):
             sl = c_low - (atr * 0.5)
             risk = price - sl
@@ -295,9 +299,8 @@ class StrategyE_LiquiditySweep(BaseStrategy):
             return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
                           strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
                           reason="🟢 Elit E: Dip Likiditesi Süpürüldü (Sweep) + Dönüş")
-        # Ayı Sweep: Fiyat tepe üstünü iğneleyip aşağı kapattıysa
         elif c_high > recent_high and price < recent_high and price < float(cur["open"]):
-            sl = c_high + (atr * 0.5)
+            sl = c_high + (atr * self.sl_atr_mult)
             risk = sl - price
             if risk <= 0: return None
             tp = price - (risk * self.rr)
@@ -309,21 +312,21 @@ class StrategyE_LiquiditySweep(BaseStrategy):
 
 
 # =====================================================================
-# STRATEJİ F (YENİ): EMA-50 Trend Pullback (Dinamik Destek/Direnç)
+# STRATEJİ F (YENİ): Session Open & Mitigation / OB Re-test (Görsel 9 Mantığı)
 # =====================================================================
 class StrategyF_TrendBounce(BaseStrategy):
-    name = "Elit F (EMA-50 Trend Pullback)"
+    name = "Elit F (Session Open & Mitigation OB)"
 
-    def __init__(self, sl_atr_mult: float = 2.0, rr: float = 3.0):
+    def __init__(self, sl_atr_mult: float = 1.8, rr: float = 2.5):
         self.sl_atr_mult = sl_atr_mult
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
         if len(df) < 200: return None
-        _clean_old_signals()
+        _clean_or_signals = _clean_old_signals()
         df = df.iloc[:-1].reset_index(drop=True)
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d1) < 60: return None
+        if len(d1) < 40: return None
 
         key = f"{symbol}_F"
         cur = df.iloc[-1]
@@ -331,34 +334,35 @@ class StrategyF_TrendBounce(BaseStrategy):
         if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 7200: return None
 
         price = float(cur["close"])
-        ema50 = float(d1["close"].ewm(span=50, adjust=False).mean().iloc[-1])
+        c_open = float(cur["open"])
         atr = float(_atr(d1).iloc[-1])
         if pd.isna(atr) or atr <= 0: return None
 
-        # Fiyat EMA-50'ye çok yakınsa (%0.4 içinde) ve oradan tepki alıyorsa
-        dist = abs(price - ema50) / ema50
-        is_near_ema = dist < 0.004
+        # Order Block (Mitigation / Re-test) mantığı: Son yükselen/düşen ana mumun tepesine/dibine temas edip tepki alma
+        prev_body_top = max(float(d1["open"].iloc[-2]), float(d1["close"].iloc[-2]))
+        prev_body_bot = min(float(d1["open"].iloc[-2]), float(d1["close"].iloc[-2]))
 
-        vol_avg = df["volume"].iloc[-15:-1].mean()
-        is_vol = float(cur["volume"]) > (vol_avg * 1.2)
-
-        if is_near_ema and is_vol:
-            if price > ema50 and price > float(cur["open"]):
-                sl = price - (atr * self.sl_atr_mult)
+        # Fiyat mitigation bölgesini test edip yukarı patlıyorsa
+        if price >= prev_body_bot and price <= prev_body_top and price > c_open:
+            vol_ok = float(cur["volume"]) > (df["volume"].iloc[-15:-1].mean() * 1.2)
+            if vol_ok:
+                sl = prev_body_bot - (atr * self.sl_atr_mult)
                 risk = price - sl
                 if risk <= 0: return None
                 tp = price + (risk * self.rr)
                 _last_signal[key] = now_ts
                 return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
                               strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
-                              reason="🟢 Elit F: EMA-50 Trend Desteğinden Tepki")
-            elif price < ema50 and price < float(cur["open"]):
-                sl = price + (atr * self.sl_atr_mult)
+                              reason="🟢 Elit F: Seviye Testi (Mitigation OB) + Alış Tepkisi")
+        elif price <= prev_body_top and price >= prev_body_bot and price < c_open:
+            vol_ok = float(cur["volume"]) > (df["volume"].iloc[-15:-1].mean() * 1.2)
+            if vol_ok:
+                sl = prev_body_top + (atr * self.sl_atr_mult)
                 risk = sl - price
                 if risk <= 0: return None
                 tp = price - (risk * self.rr)
                 _last_signal[key] = now_ts
                 return Signal(type=SignalType.SELL, symbol=symbol, timeframe=timeframe, price=price,
                               strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
-                              reason="🔴 Elit F: EMA-50 Trend Direncinden Tepki")
+                              reason="🔴 Elit F: Seviye Testi (Mitigation OB) + Satış Tepkisi")
         return None
