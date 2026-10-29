@@ -38,7 +38,7 @@ def _atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
 
 
 # =====================================================================
-# STRATEJİ A: Discount / Premium & FVG Likidite Avı
+# STRATEJİ A: Discount / Premium & FVG Likidite Avı (Esnetilmiş)
 # =====================================================================
 class StrategyA_OrderBlock(BaseStrategy):
     name = "Elit A (Discount/Premium & FVG)"
@@ -60,7 +60,8 @@ class StrategyA_OrderBlock(BaseStrategy):
         key = f"{symbol}_A"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 43200:
+        # Cooldown süresini 4 saate düşürdük (14400 saniye)
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 14400:
             return None
 
         price = float(cur["close"])
@@ -113,7 +114,7 @@ class StrategyA_OrderBlock(BaseStrategy):
 
 
 # =====================================================================
-# STRATEJİ B: Impulse & Correction (İtme ve Düzeltme Bitişi)
+# STRATEJİ B: Impulse & Correction Bitişi (Esnetilmiş)
 # =====================================================================
 class StrategyB_FVG(BaseStrategy):
     name = "Elit B (Impulse & Correction Bitişi)"
@@ -135,7 +136,7 @@ class StrategyB_FVG(BaseStrategy):
         key = f"{symbol}_B"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 43200:
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 14400:
             return None
 
         c = d1["close"].values
@@ -143,15 +144,16 @@ class StrategyB_FVG(BaseStrategy):
         body = abs(c - o)
         avg_body = pd.Series(body).rolling(20).mean().iloc[-1]
 
-        is_impulse_bull = (c[-2] > o[-2]) and (body[-2] > 2.0 * avg_body)
-        is_impulse_bear = (c[-2] < o[-2]) and (body[-2] > 2.0 * avg_body)
+        # Katsayıyı 2.0 katından 1.4 katına düşürerek esnettik
+        is_impulse_bull = (c[-2] > o[-2]) and (body[-2] > 1.4 * avg_body)
+        is_impulse_bear = (c[-2] < o[-2]) and (body[-2] > 1.4 * avg_body)
 
         price = float(cur["close"])
         atr = float(_atr(d1).iloc[-1])
         if pd.isna(atr) or atr <= 0: return None
 
         vol_avg = df["volume"].iloc[-20:-1].mean()
-        is_volume_ok = float(cur["volume"]) > (vol_avg * 1.5)
+        is_volume_ok = float(cur["volume"]) > (vol_avg * 1.3) # Hacim eşiği hafif esnetildi
 
         if is_impulse_bull and price > o[-2] and is_volume_ok and price > float(cur["open"]):
             sl = float(d1["low"].iloc[-2]) - (atr * 0.5)
@@ -176,7 +178,7 @@ class StrategyB_FVG(BaseStrategy):
 
 
 # =====================================================================
-# STRATEJİ C: Volume Profile POC & Hacim Yoğunluk Tepkisi
+# STRATEJİ C: Volume Profile POC Seviye Tepkisi (Esnetilmiş)
 # =====================================================================
 class StrategyC_TrendBreak(BaseStrategy):
     name = "Elit C (Volume Profile POC Tepkisi)"
@@ -198,7 +200,7 @@ class StrategyC_TrendBreak(BaseStrategy):
         key = f"{symbol}_C"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 43200:
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 14400:
             return None
 
         typical_price = (d1["high"] + d1["low"] + d1["close"]) / 3
@@ -210,10 +212,10 @@ class StrategyC_TrendBreak(BaseStrategy):
         if pd.isna(atr) or atr <= 0: return None
 
         dist_from_poc = abs(price - poc) / poc
-        is_near_poc = dist_from_poc < 0.005
+        is_near_poc = dist_from_poc < 0.01  # Yakınlık bandı %0.5'ten %1'e esnetildi
 
         vol_avg = df["volume"].iloc[-20:-1].mean()
-        is_volume_spike = float(cur["volume"]) > (vol_avg * 1.8)
+        is_volume_spike = float(cur["volume"]) > (vol_avg * 1.4) # Hacim eşiği esnetildi
 
         if is_near_poc and is_volume_spike:
             if price > float(cur["open"]):
