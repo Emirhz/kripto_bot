@@ -38,7 +38,7 @@ def _atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
 
 
 # =====================================================================
-# STRATEJİ A: Discount / Premium & FVG Likidite Avı (1. Görsel Mantığı)
+# STRATEJİ A: Discount / Premium & FVG Likidite Avı
 # =====================================================================
 class StrategyA_OrderBlock(BaseStrategy):
     name = "Elit A (Discount/Premium & FVG)"
@@ -60,7 +60,7 @@ class StrategyA_OrderBlock(BaseStrategy):
         key = f"{symbol}_A"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 43200: # 12 saat cooldown
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 43200:
             return None
 
         price = float(cur["close"])
@@ -68,12 +68,10 @@ class StrategyA_OrderBlock(BaseStrategy):
         c_high = float(cur["high"])
         c_low = float(cur["low"])
 
-        # Son 30 mumun en yüksek ve en düşük seviyesi (Range / Equilibrium hesabı)
         recent_high = d1["high"].iloc[-30:].max()
         recent_low = d1["low"].iloc[-30:].min()
-        eq = (recent_high + recent_low) / 2  # Denge noktası
+        eq = (recent_high + recent_low) / 2
 
-        # FVG Tespiti
         h = d1["high"].values
         l = d1["low"].values
         n = len(d1)
@@ -92,7 +90,6 @@ class StrategyA_OrderBlock(BaseStrategy):
 
         top, bottom, direction = fvg_zone["top"], fvg_zone["bottom"], fvg_zone["dir"]
         
-        # Şart 1: Boğa sinyali için fiyat Discount bölgesinde (EQ altında) olmalı ve FVG'ye değmeli
         if direction == "bullish" and price < eq and c_low <= top and c_high >= bottom and price > c_open:
             sl = bottom - (atr * self.sl_atr_mult)
             risk = price - sl
@@ -100,10 +97,9 @@ class StrategyA_OrderBlock(BaseStrategy):
             tp = price + (risk * self.rr)
             _last_signal[key] = now_ts
             return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
-                          strategy_name=self.name, strength=0.92, stop_loss=sl, take_profit=tp,
+                          strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
                           reason="🟢 Elit A: Discount Bölgesi + FVG Likidite Tepkisi")
 
-        # Şart 2: Ayı sinyali için fiyat Premium bölgesinde (EQ üstünde) olmalı
         elif direction == "bearish" and price > eq and c_low <= top and c_high >= bottom and price < c_open:
             sl = top + (atr * self.sl_atr_mult)
             risk = sl - price
@@ -111,13 +107,13 @@ class StrategyA_OrderBlock(BaseStrategy):
             tp = price - (risk * self.rr)
             _last_signal[key] = now_ts
             return Signal(type=SignalType.SELL, symbol=symbol, timeframe=timeframe, price=price,
-                          strategy_name=self.name, strength=0.92, stop_loss=sl, take_profit=tp,
+                          strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
                           reason="🔴 Elit A: Premium Bölgesi + FVG Likidite Tepkisi")
         return None
 
 
 # =====================================================================
-# STRATEJİ B: Impulse & Correction (İtme ve Düzeltme Bitişi) (3. Görsel)
+# STRATEJİ B: Impulse & Correction (İtme ve Düzeltme Bitişi)
 # =====================================================================
 class StrategyB_FVG(BaseStrategy):
     name = "Elit B (Impulse & Correction Bitişi)"
@@ -147,7 +143,6 @@ class StrategyB_FVG(BaseStrategy):
         body = abs(c - o)
         avg_body = pd.Series(body).rolling(20).mean().iloc[-1]
 
-        # Impulse mumu: Devasa gövdeli kurumsal mum (Ortalamanın 2 katı gövde)
         is_impulse_bull = (c[-2] > o[-2]) and (body[-2] > 2.0 * avg_body)
         is_impulse_bear = (c[-2] < o[-2]) and (body[-2] > 2.0 * avg_body)
 
@@ -158,7 +153,6 @@ class StrategyB_FVG(BaseStrategy):
         vol_avg = df["volume"].iloc[-20:-1].mean()
         is_volume_ok = float(cur["volume"]) > (vol_avg * 1.5)
 
-        # Correction (düzeltme) bittikten sonra ana yöne devam tetiklemesi
         if is_impulse_bull and price > o[-2] and is_volume_ok and price > float(cur["open"]):
             sl = float(d1["low"].iloc[-2]) - (atr * 0.5)
             risk = price - sl
@@ -166,7 +160,7 @@ class StrategyB_FVG(BaseStrategy):
             tp = price + (risk * self.rr)
             _last_signal[key] = now_ts
             return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
-                          strategy_name=self.name, strength=0.95, stop_loss=sl, take_profit=tp,
+                          strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
                           reason="🟢 Elit B: Impulse Devamı + Correction Sona Erdi")
 
         elif is_impulse_bear and price < o[-2] and is_volume_ok and price < float(cur["open"]):
@@ -176,13 +170,13 @@ class StrategyB_FVG(BaseStrategy):
             tp = price - (risk * self.rr)
             _last_signal[key] = now_ts
             return Signal(type=SignalType.SELL, symbol=symbol, timeframe=timeframe, price=price,
-                          strategy_name=self.name, strength=0.95, stop_loss=sl, take_profit=tp,
+                          strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
                           reason="🔴 Elit B: Impulse Düşüşü + Correction Sona Erdi")
         return None
 
 
 # =====================================================================
-# STRATEJİ C: Volume Profile POC & Hacim Yoğunluk Tepkisi (2. Görsel)
+# STRATEJİ C: Volume Profile POC & Hacim Yoğunluk Tepkisi
 # =====================================================================
 class StrategyC_TrendBreak(BaseStrategy):
     name = "Elit C (Volume Profile POC Tepkisi)"
@@ -207,8 +201,6 @@ class StrategyC_TrendBreak(BaseStrategy):
         if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 43200:
             return None
 
-        # Basitleştirilmiş Volume Profile POC (Hacmin en çok işlem gördüğü fiyat seviyesi tahmini)
-        # Son 50 mum içinde ağırlıklı ortalama fiyat bölgesi (POC noktası simülasyonu)
         typical_price = (d1["high"] + d1["low"] + d1["close"]) / 3
         volume = d1["volume"]
         poc = (typical_price * volume).sum() / volume.sum()
@@ -217,30 +209,29 @@ class StrategyC_TrendBreak(BaseStrategy):
         atr = float(_atr(d1).iloc[-1])
         if pd.isna(atr) or atr <= 0: return None
 
-        # Fiyat POC seviyesine yakınsa ve oradan güçlü tepki alıyorsa
         dist_from_poc = abs(price - poc) / poc
-        is_near_poc = dist_from_poc < 0.005 # %0.5 yakınlık
+        is_near_poc = dist_from_poc < 0.005
 
         vol_avg = df["volume"].iloc[-20:-1].mean()
         is_volume_spike = float(cur["volume"]) > (vol_avg * 1.8)
 
         if is_near_poc and is_volume_spike:
-            if price > float(cur["open"]): # Boğa tepkisi
+            if price > float(cur["open"]):
                 sl = price - (atr * self.sl_atr_mult)
                 risk = price - sl
                 if risk <= 0: return None
                 tp = price + (risk * self.rr)
                 _last_signal[key] = now_ts
                 return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
-                              strategy_name=self.name, strength=0.96, stop_loss=sl, take_profit=tp,
+                              strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
                               reason="🟢 Elit C: Volume Profile POC Seviyesinden Sert Tepki")
-            elif price < float(cur["open"]): # Ayı tepkisi
+            elif price < float(cur["open"]):
                 sl = price + (atr * self.sl_atr_mult)
                 risk = sl - price
                 if risk <= 0: return None
                 tp = price - (risk * self.rr)
                 _last_signal[key] = now_ts
                 return Signal(type=SignalType.SELL, symbol=symbol, timeframe=timeframe, price=price,
-                              strategy_name=self.name, strength=0.96, stop_loss=sl, take_profit=tp,
+                              strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
                               reason="🔴 Elit C: Volume Profile POC Seviyesinden Sert Tepki")
         return None
