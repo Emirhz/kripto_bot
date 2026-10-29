@@ -38,7 +38,7 @@ def _atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
 
 
 # =====================================================================
-# STRATEJİ A: Discount / Premium & FVG Likidite Avı (Esnetilmiş)
+# STRATEJİ A: Discount / Premium & FVG Likidite Avı (Daha Esnek)
 # =====================================================================
 class StrategyA_OrderBlock(BaseStrategy):
     name = "Elit A (Discount/Premium & FVG)"
@@ -48,20 +48,20 @@ class StrategyA_OrderBlock(BaseStrategy):
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
-        if len(df) < 250:
+        if len(df) < 200:
             return None
         _clean_old_signals()
         
         df = df.iloc[:-1].reset_index(drop=True)
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d1) < 50:
+        if len(d1) < 40:
             return None
 
         key = f"{symbol}_A"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        # Cooldown süresini 4 saate düşürdük (14400 saniye)
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 14400:
+        # Cooldown süresini 2 saate indirdik (7200 saniye)
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 7200:
             return None
 
         price = float(cur["close"])
@@ -69,15 +69,15 @@ class StrategyA_OrderBlock(BaseStrategy):
         c_high = float(cur["high"])
         c_low = float(cur["low"])
 
-        recent_high = d1["high"].iloc[-30:].max()
-        recent_low = d1["low"].iloc[-30:].min()
+        recent_high = d1["high"].iloc[-25:].max()
+        recent_low = d1["low"].iloc[-25:].min()
         eq = (recent_high + recent_low) / 2
 
         h = d1["high"].values
         l = d1["low"].values
         n = len(d1)
         fvg_zone = None
-        for i in range(max(2, n - 15), n):
+        for i in range(max(2, n - 12), n):
             if l[i] > h[i - 2]:
                 fvg_zone = {"dir": "bullish", "top": l[i], "bottom": h[i - 2]}
             elif h[i] < l[i - 2]:
@@ -114,7 +114,7 @@ class StrategyA_OrderBlock(BaseStrategy):
 
 
 # =====================================================================
-# STRATEJİ B: Impulse & Correction Bitişi (Esnetilmiş)
+# STRATEJİ B: Impulse & Correction Bitişi (Daha Esnek)
 # =====================================================================
 class StrategyB_FVG(BaseStrategy):
     name = "Elit B (Impulse & Correction Bitişi)"
@@ -124,36 +124,36 @@ class StrategyB_FVG(BaseStrategy):
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
-        if len(df) < 250:
+        if len(df) < 200:
             return None
         _clean_old_signals()
 
         df = df.iloc[:-1].reset_index(drop=True)
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d1) < 30:
+        if len(d1) < 25:
             return None
 
         key = f"{symbol}_B"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 14400:
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 7200:
             return None
 
         c = d1["close"].values
         o = d1["open"].values
         body = abs(c - o)
-        avg_body = pd.Series(body).rolling(20).mean().iloc[-1]
+        avg_body = pd.Series(body).rolling(15).mean().iloc[-1]
 
-        # Katsayıyı 2.0 katından 1.4 katına düşürerek esnettik
-        is_impulse_bull = (c[-2] > o[-2]) and (body[-2] > 1.4 * avg_body)
-        is_impulse_bear = (c[-2] < o[-2]) and (body[-2] > 1.4 * avg_body)
+        # Katsayıyı 1.2 katına çekerek yakalanabilirliği artırdık
+        is_impulse_bull = (c[-2] > o[-2]) and (body[-2] > 1.2 * avg_body)
+        is_impulse_bear = (c[-2] < o[-2]) and (body[-2] > 1.2 * avg_body)
 
         price = float(cur["close"])
         atr = float(_atr(d1).iloc[-1])
         if pd.isna(atr) or atr <= 0: return None
 
-        vol_avg = df["volume"].iloc[-20:-1].mean()
-        is_volume_ok = float(cur["volume"]) > (vol_avg * 1.3) # Hacim eşiği hafif esnetildi
+        vol_avg = df["volume"].iloc[-15:-1].mean()
+        is_volume_ok = float(cur["volume"]) > (vol_avg * 1.2)
 
         if is_impulse_bull and price > o[-2] and is_volume_ok and price > float(cur["open"]):
             sl = float(d1["low"].iloc[-2]) - (atr * 0.5)
@@ -178,7 +178,7 @@ class StrategyB_FVG(BaseStrategy):
 
 
 # =====================================================================
-# STRATEJİ C: Volume Profile POC Seviye Tepkisi (Esnetilmiş)
+# STRATEJİ C: Volume Profile POC Seviye Tepkisi (Daha Esnek)
 # =====================================================================
 class StrategyC_TrendBreak(BaseStrategy):
     name = "Elit C (Volume Profile POC Tepkisi)"
@@ -188,19 +188,19 @@ class StrategyC_TrendBreak(BaseStrategy):
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
-        if len(df) < 250:
+        if len(df) < 200:
             return None
         _clean_old_signals()
 
         df = df.iloc[:-1].reset_index(drop=True)
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d1) < 50:
+        if len(d1) < 40:
             return None
 
         key = f"{symbol}_C"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 14400:
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 7200:
             return None
 
         typical_price = (d1["high"] + d1["low"] + d1["close"]) / 3
@@ -212,10 +212,10 @@ class StrategyC_TrendBreak(BaseStrategy):
         if pd.isna(atr) or atr <= 0: return None
 
         dist_from_poc = abs(price - poc) / poc
-        is_near_poc = dist_from_poc < 0.01  # Yakınlık bandı %0.5'ten %1'e esnetildi
+        is_near_poc = dist_from_poc < 0.015  # Yakınlık bandını %1.5 yaptık
 
-        vol_avg = df["volume"].iloc[-20:-1].mean()
-        is_volume_spike = float(cur["volume"]) > (vol_avg * 1.4) # Hacim eşiği esnetildi
+        vol_avg = df["volume"].iloc[-15:-1].mean()
+        is_volume_spike = float(cur["volume"]) > (vol_avg * 1.25)
 
         if is_near_poc and is_volume_spike:
             if price > float(cur["open"]):
