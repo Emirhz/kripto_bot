@@ -1,43 +1,17 @@
 import pandas as pd
 from strategies.base import BaseStrategy, Signal, SignalType
 
-# Sinyal için gereken minimum puan (en fazla 10).
-# Çok sinyal geliyorsa yükselt (7-8), hiç gelmiyorsa düşür (5).
-MIN_SCORE = 7
-
-# Aynı coine tekrar sinyal gelmemesi için bekleme süresi (saat)
-COOLDOWN_HOURS = 4
-
-# --- TREND FİLTRESİ ---
-TREND_FILTER = True
-TREND_EMA = 50
-NEUTRAL_BAND = 0.003
-
-# Bellek sızıntısını (Memory Leak) önlemek için global sözlük yerine yönetim
+AGG = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
 _last_signal = {}
 
-AGG = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
-
-
 def _clean_old_signals():
-    """Bellekte biriken eski sinyal zamanlarını temizler."""
+    """Bellek sızıntısını önlemek için eski sinyal kayıtlarını temizler."""
     global _last_signal
-    now = pd.Timestamp.now(tz=None)
+    now = pd.Timestamp.now()
     _last_signal = {
-        sym: ts for sym, ts in _last_signal.items()
-        if pd.notna(ts) and (now - pd.Timestamp(ts)).total_seconds() < 86400  # Son 24 saat
+        key: ts for key, ts in _last_signal.items()
+        if pd.notna(ts) and (now - pd.Timestamp(ts)).total_seconds() < 86400
     }
-
-
-def _atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
-    pc = df["close"].shift(1)
-    tr = pd.concat([
-        df["high"] - df["low"],
-        (df["high"] - pc).abs(),
-        (df["low"] - pc).abs(),
-    ], axis=1).max(axis=1)
-    return tr.rolling(n).mean()
-
 
 def _resample_closed(df: pd.DataFrame, rule: str, delta: pd.Timedelta) -> pd.DataFrame:
     """15m veriden üst zaman dilimi üretir, kapanmamış son mumu atar."""
@@ -55,246 +29,230 @@ def _resample_closed(df: pd.DataFrame, rule: str, delta: pd.Timedelta) -> pd.Dat
     except Exception:
         return pd.DataFrame()
 
-
-def _trend_ok(d1: pd.DataFrame, price: float, want: str) -> bool:
-    """1H EMA'ya göre sinyal yönü trendle uyumlu mu?"%"""
-    if not TREND_FILTER or len(d1) < TREND_EMA + 10:
-        return True
-    
-    ema = float(d1["close"].ewm(span=TREND_EMA, adjust=False).mean().iloc[-1])
-    if ema <= 0:
-        return True
-    
-    dist = (price - ema) / ema
-    if abs(dist) <= NEUTRAL_BAND:
-        return True
-    if want == "bullish" and dist < 0:
-        return False
-    if want == "bearish" and dist > 0:
-        return False
-    return True
+def _atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
+    pc = df["close"].shift(1)
+    tr = pd.concat([
+        df["high"] - df["low"],
+        (df["high"] - pc).abs(),
+        (df["low"] - pc).abs(),
+    ], axis=1).max(axis=1)
+    return tr.rolling(n).mean()
 
 
-def _bias(d4: pd.DataFrame) -> int:
-    """4H piyasa yapısı: son kırılım yukarıysa 1, aşağıysa -1."""
-    if len(d4) < 10:
-        return 0
-    h = d4["high"].values
-    l = d4["low"].values
-    c = d4["close"].values
-    bias = 0
-    last_sh = None
-    last_sl = None
-    
-    for i in range(len(c)):
-        j = i - 2
-        if j >= 2 and j + 2 < len(h):
-            if h[j] > max(h[j - 2:j]) and h[j] > max(h[j + 1:j + 3]):
-                last_sh = h[j]
-            if l[j] < min(l[j - 2:j]) and l[j] < min(l[j + 1:j + 3]):
-                last_sl = l[j]
-        if last_sh is not None and c[i] > last_sh:
-            bias = 1
-            last_sh = None
-        elif last_sl is not None and c[i] < last_sl:
-            bias = -1
-            last_sl = None
-    return bias
-
-
-def _build_zones(d: pd.DataFrame, delta: pd.Timedelta) -> list:
-    """1H grafikte OB, FVG ve IFVG bölgelerini bulur."""
-    if len(d) < 30:
-        return []
-    
-    idx = d.index
-    o = d["open"].values
-    h = d["high"].values
-    l = d["low"].values
-    c = d["close"].values
-    n = len(d)
-    body = abs(c - o)
-    avg = pd.Series(body).rolling(20).mean().values
-
-    found = []
-    for i in range(max(2, n - 60), n):
-        # FVG
-        if l[i] > h[i - 2]:
-            found.append(("FVG", "bullish", l[i], h[i - 2], i))
-        elif h[i] < l[i - 2]:
-            found.append(("FVG", "bearish", l[i - 2], h[i], i))
-        
-        # Order Block (son ters mum + güçlü itme mumu)
-        if not pd.isna(avg[i]) and body[i] > 1.4 * avg[i]:
-            if c[i - 1] < o[i - 1] and c[i] > h[i - 1]:
-                found.append(("OB", "bullish", h[i - 1], l[i - 1], i))
-            elif c[i - 1] > o[i - 1] and c[i] < l[i - 1]:
-                found.append(("OB", "bearish", h[i - 1], l[i - 1], i))
-
-    zones = []
-    for kind, direction, top, bottom, i in found:
-        k_kind, k_dir = kind, direction
-        valid_from = i
-        alive = True
-        for k in range(i + 1, n):
-            if k_dir == "bullish" and c[k] < bottom:
-                if k_kind == "FVG":
-                    k_kind, k_dir, valid_from = "IFVG", "bearish", k
-                else:
-                    alive = False
-                    break
-            elif k_dir == "bearish" and c[k] > top:
-                if k_kind == "FVG":
-                    k_kind, k_dir, valid_from = "IFVG", "bullish", k
-                else:
-                    alive = False
-                    break
-        if alive and valid_from < len(idx):
-            zones.append({
-                "kind": k_kind,
-                "direction": k_dir,
-                "top": float(top),
-                "bottom": float(bottom),
-                "valid_from": idx[valid_from] + delta,
-            })
-    return zones
-
-
-class OrderBlockFVGStrategy(BaseStrategy):
-    name = "ICT Puanlı (4H Yapı + 1H OB/FVG/IFVG + 15m Tepki)"
+# ==========================================
+# STRATEJİ A: Order Block & Likidite Süpürmesi
+# ==========================================
+class StrategyA_OrderBlock(BaseStrategy):
+    name = "Strateji A (OB & Likidite Sweep)"
 
     def __init__(self, sl_atr_mult: float = 1.5, rr: float = 2.0):
         self.sl_atr_mult = sl_atr_mult
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
-        if len(df) < 250:
+        if len(df) < 200:
             return None
-
         _clean_old_signals()
-
-        # Oluşmakta olan son mumu at, sadece kapanmış mumlarla çalış
+        
         df = df.iloc[:-1].reset_index(drop=True)
-
-        d4 = _resample_closed(df, "4h", pd.Timedelta(hours=4))
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d4) < 15 or len(d1) < 30:
+        if len(d1) < 40:
             return None
 
-        # 1) YÖN (Bias)
-        bias = _bias(d4)
-        if bias == 0:
-            return None
-        want = "bullish" if bias == 1 else "bearish"
-
-        # 2) BÖLGELER
-        zones = _build_zones(d1, pd.Timedelta(hours=1))
-        zones = [z for z in zones if z["direction"] == want]
-        if not zones:
-            return None
-
-        # 3) GİRİŞ MUMU
+        # Cooldown kontrolü (Strateji bazlı)
+        key = f"{symbol}_A"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 14400: # 4 saat
+            return None
+
         price = float(cur["close"])
         c_open = float(cur["open"])
         c_high = float(cur["high"])
         c_low = float(cur["low"])
 
-        # 3b) TREND FİLTRESİ (1H EMA)
-        if not _trend_ok(d1, price, want):
-            return None
-
-        atr_series = _atr(d1)
-        if atr_series.empty or pd.isna(atr_series.iloc[-1]):
-            return None
-        atr = float(atr_series.iloc[-1])
-        if atr <= 0:
-            return None
-
-        # Cooldown Kontrolü
-        last = _last_signal.get(symbol)
-        if last is not None and (now_ts - last).total_seconds() < COOLDOWN_HOURS * 3600:
-            return None
-
-        recent_low = df["low"].iloc[-11:-1].min()
-        recent_high = df["high"].iloc[-11:-1].max()
+        # 1H Order Block Tespiti
+        o = d1["open"].values
+        h = d1["high"].values
+        l = d1["low"].values
+        c = d1["close"].values
+        n = len(d1)
         
-        # Güçlendirilmiş hacim filtresi (Ortalamanın 1.3 katı)
-        vol_sma = df["volume"].iloc[-21:-1].mean()
-        vol_ok = float(cur["volume"]) > (float(vol_sma) * 1.3) if vol_sma > 0 else False
+        ob_zone = None
+        for i in range(max(2, n - 30), n):
+            body = abs(c[i] - o[i])
+            avg_body = pd.Series(abs(c - o)).rolling(20).mean().iloc[i]
+            if not pd.isna(avg_body) and body > 1.4 * avg_body:
+                if c[i - 1] < o[i - 1] and c[i] > h[i - 1]: # Bullish OB
+                    ob_zone = {"dir": "bullish", "top": h[i-1], "bottom": l[i-1]}
+                elif c[i - 1] > o[i - 1] and c[i] < l[i - 1]: # Bearish OB
+                    ob_zone = {"dir": "bearish", "top": h[i-1], "bottom": l[i-1]}
 
-        best = None
-        for z in zones:
-            top, bottom = z["top"], z["bottom"]
-            mid = (top + bottom) / 2
-
-            # Mum bölgeye değdi mi?
-            if not (c_low <= top and c_high >= bottom):
-                continue
-
-            # Tepki mumu (renk + bölge ortasının doğru tarafında kapanış)
-            if want == "bullish":
-                if not (price > c_open and price >= mid):
-                    continue
-            else:
-                if not (price < c_open and price <= mid):
-                    continue
-
-            score = 2  # 4H yapı uyumu
-            score += 1 if z["kind"] == "FVG" else 2
-
-            # İlk dokunuş mu?
-            prior = df[(df["timestamp"] >= z["valid_from"]) & (df["timestamp"] < now_ts)]
-            touched_before = ((prior["low"] <= top) & (prior["high"] >= bottom)).any()
-            if not touched_before:
-                score += 2
-
-            # Confluence (Bölgelerin üst üste binişi)
-            for o in zones:
-                if o is z:
-                    continue
-                if o["kind"] != z["kind"] and o["bottom"] <= top and o["top"] >= bottom:
-                    score += 2
-                    break
-
-            # Likidite süpürmesi (Sweep)
-            if want == "bullish" and c_low < recent_low:
-                score += 1
-            if want == "bearish" and c_high > recent_high:
-                score += 1
-
-            if vol_ok:
-                score += 1
-
-            if best is None or score > best[0]:
-                best = (score, z)
-
-        if best is None or best[0] < MIN_SCORE:
+        if not ob_zone:
             return None
 
-        score, z = best
-        if want == "bullish":
-            sl = z["bottom"] - (atr * self.sl_atr_mult)
+        atr = float(_atr(d1).iloc[-1])
+        if pd.isna(atr) or atr <= 0:
+            return None
+
+        # Fiyat OB bölgesine değdi mi ve tepki verdi mi?
+        top, bottom, direction = ob_zone["top"], ob_zone["bottom"], ob_zone["dir"]
+        if not (c_low <= top and c_high >= bottom):
+            return None
+
+        if direction == "bullish" and price > c_open:
+            sl = bottom - (atr * self.sl_atr_mult)
             risk = price - sl
-            if risk <= 0:
-                return None
+            if risk <= 0: return None
             tp = price + (risk * self.rr)
-            sig_type, emoji = SignalType.BUY, "🟢"
-        else:
-            sl = z["top"] + (atr * self.sl_atr_mult)
+            _last_signal[key] = now_ts
+            return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
+                          strategy_name=self.name, strength=0.8, stop_loss=sl, take_profit=tp,
+                          reason="🟢 Strateji A: 1H Order Block & Boğa Tepkisi")
+
+        elif direction == "bearish" and price < c_open:
+            sl = top + (atr * self.sl_atr_mult)
             risk = sl - price
-            if risk <= 0:
-                return None
+            if risk <= 0: return None
             tp = price - (risk * self.rr)
-            sig_type, emoji = SignalType.SELL, "🔴"
+            _last_signal[key] = now_ts
+            return Signal(type=SignalType.SELL, symbol=symbol, timeframe=timeframe, price=price,
+                          strategy_name=self.name, strength=0.8, stop_loss=sl, take_profit=tp,
+                          reason="🔴 Strateji A: 1H Order Block & Ayı Tepkisi")
+        return None
 
-        _last_signal[symbol] = now_ts
 
-        return Signal(
-            type=sig_type, symbol=symbol, timeframe=timeframe,
-            price=price, strategy_name=self.name,
-            strength=min(score / 10, 1.0),
-            stop_loss=sl, take_profit=tp,
-            reason=f"{emoji} Puan {score}/10 | 4H yapı + 1H {z['kind']} tepkisi"
-        )
+# ==========================================
+# STRATEJİ B: FVG & iFVG (Dengesizlik)
+# ==========================================
+class StrategyB_FVG(BaseStrategy):
+    name = "Strateji B (FVG Dengesizlik)"
+
+    def __init__(self, sl_atr_mult: float = 1.5, rr: float = 2.0):
+        self.sl_atr_mult = sl_atr_mult
+        self.rr = rr
+
+    def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
+        if len(df) < 200:
+            return None
+        _clean_old_signals()
+
+        df = df.iloc[:-1].reset_index(drop=True)
+        d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
+        if len(d1) < 30:
+            return None
+
+        key = f"{symbol}_B"
+        cur = df.iloc[-1]
+        now_ts = cur["timestamp"]
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 14400:
+            return None
+
+        price = float(cur["close"])
+        c_open = float(cur["open"])
+        c_high = float(cur["high"])
+        c_low = float(cur["low"])
+
+        h = d1["high"].values
+        l = d1["low"].values
+        n = len(d1)
+
+        fvg_zone = None
+        # Son mumlarda FVG arayalım
+        for i in range(max(2, n - 20), n):
+            if l[i] > h[i - 2]: # Bullish FVG
+                fvg_zone = {"dir": "bullish", "top": l[i], "bottom": h[i - 2]}
+            elif h[i] < l[i - 2]: # Bearish FVG
+                fvg_zone = {"dir": "bearish", "top": l[i - 2], "bottom": h[i]}
+
+        if not fvg_zone:
+            return None
+
+        atr = float(_atr(d1).iloc[-1])
+        if pd.isna(atr) or atr <= 0: return None
+
+        top, bottom, direction = fvg_zone["top"], fvg_zone["bottom"], fvg_zone["dir"]
+        if not (c_low <= top and c_high >= bottom):
+            return None
+
+        if direction == "bullish" and price > c_open:
+            sl = bottom - (atr * self.sl_atr_mult)
+            risk = price - sl
+            if risk <= 0: return None
+            tp = price + (risk * self.rr)
+            _last_signal[key] = now_ts
+            return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
+                          strategy_name=self.name, strength=0.8, stop_loss=sl, take_profit=tp,
+                          reason="🟢 Strateji B: 1H FVG Boşluk Doldurma Tepkisi")
+
+        elif direction == "bearish" and price < c_open:
+            sl = top + (atr * self.sl_atr_mult)
+            risk = sl - price
+            if risk <= 0: return None
+            tp = price - (risk * self.rr)
+            _last_signal[key] = now_ts
+            return Signal(type=SignalType.SELL, symbol=symbol, timeframe=timeframe, price=price,
+                          strategy_name=self.name, strength=0.8, stop_loss=sl, take_profit=tp,
+                          reason="🔴 Strateji B: 1H FVG Boşluk Doldurma Tepkisi")
+        return None
+
+
+# ==========================================
+# STRATEJİ C: 4H Trend & Momentum Devamı
+# ==========================================
+class StrategyC_TrendBreak(BaseStrategy):
+    name = "Strateji C (4H Trend & Momentum)"
+
+    def __init__(self, sl_atr_mult: float = 1.8, rr: float = 2.0):
+        self.sl_atr_mult = sl_atr_mult
+        self.rr = rr
+
+    def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
+        if len(df) < 200:
+            return None
+        _clean_old_signals()
+
+        df = df.iloc[:-1].reset_index(drop=True)
+        d4 = _resample_closed(df, "4h", pd.Timedelta(hours=4))
+        d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
+        if len(d4) < 15 or len(d1) < 50:
+            return None
+
+        key = f"{symbol}_C"
+        cur = df.iloc[-1]
+        now_ts = cur["timestamp"]
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 14400:
+            return None
+
+        price = float(cur["close"])
+        
+        # 4H Yapı Kararı (Basit Swing Yönü)
+        h4_c = d4["close"].values
+        h4_trend = 1 if h4_c[-1] > h4_c[-3] else -1
+
+        # 1H EMA 50 Filtresi
+        ema50 = float(d1["close"].ewm(span=50, adjust=False).mean().iloc[-1])
+        atr = float(_atr(d1).iloc[-1])
+        if pd.isna(atr) or atr <= 0: return None
+
+        # Trend ve Momentum Uyumu
+        if h4_trend == 1 and price > ema50 and float(cur["volume"]) > float(df["volume"].iloc[-20:-1].mean() * 1.4):
+            sl = price - (atr * self.sl_atr_mult)
+            risk = price - sl
+            if risk <= 0: return None
+            tp = price + (risk * self.rr)
+            _last_signal[key] = now_ts
+            return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
+                          strategy_name=self.name, strength=0.85, stop_loss=sl, take_profit=tp,
+                          reason="🟢 Strateji C: 4H Trend Devamı + Hacim Patlaması")
+
+        elif h4_trend == -1 and price < ema50 and float(cur["volume"]) > float(df["volume"].iloc[-20:-1].mean() * 1.4):
+            sl = price + (atr * self.sl_atr_mult)
+            risk = sl - price
+            if risk <= 0: return None
+            tp = price - (risk * self.rr)
+            _last_signal[key] = now_ts
+            return Signal(type=SignalType.SELL, symbol=symbol, timeframe=timeframe, price=price,
+                          strategy_name=self.name, strength=0.85, stop_loss=sl, take_profit=tp,
+                          reason="🔴 Strateji C: 4H Düşüş Trendi + Hacim Patlaması")
+        return None
