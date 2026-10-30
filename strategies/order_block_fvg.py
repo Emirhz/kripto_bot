@@ -50,7 +50,6 @@ class StrategyA_OrderBlock(BaseStrategy):
         recent_low = df["low"].iloc[-20:].min()
         eq = (recent_high + recent_low) / 2
 
-        # Fiyat Discount bölgesindeyse ve yeşil kapattıysa AL
         if price < eq and price > c_open and float(cur["volume"]) > df["volume"].iloc[-10:-1].mean():
             sl = recent_low - (atr * self.sl_atr_mult)
             risk = price - sl
@@ -60,7 +59,6 @@ class StrategyA_OrderBlock(BaseStrategy):
             return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
                           strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
                           reason="🟢 Elit A: 15M Discount Bölgesi Tepkisi")
-        # Fiyat Premium bölgesindeyse ve kırmızı kapattıysa SAT
         elif price > eq and price < c_open and float(cur["volume"]) > df["volume"].iloc[-10:-1].mean():
             sl = recent_high + (atr * self.sl_atr_mult)
             risk = sl - price
@@ -98,10 +96,10 @@ class StrategyB_FVG(BaseStrategy):
         avg_body = pd.Series(body).rolling(10).mean().iloc[-1]
 
         price = float(cur["close"])
+        c_open = float(cur["open"])
         atr = float(_atr(df).iloc[-1])
         if pd.isna(atr) or atr <= 0: return None
 
-        # Önceki mum büyük gövdeli bir itme mumu ise ve şimdiki mum devam ediyorsa
         if (c[-2] > o[-2]) and (body[-2] > 1.2 * avg_body) and price > c_open:
             sl = float(df["low"].iloc[-2]) - (atr * 0.3)
             risk = price - sl
@@ -124,7 +122,7 @@ class StrategyB_FVG(BaseStrategy):
 
 
 # =====================================================================
-# STRATEJİ C: 15M Pinbar / Reversal (Delta Benzeri)
+# STRATEJİ C: 15M Pinbar / Reversal
 # =====================================================================
 class StrategyC_TrendBreak(BaseStrategy):
     name = "Elit C (15M Pinbar Reversal)"
@@ -198,13 +196,14 @@ class StrategyD_MarketStructure(BaseStrategy):
         if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 10800: return None
 
         price = float(cur["close"])
+        c_open = float(cur["open"])
         atr = float(_atr(df).iloc[-1])
         if pd.isna(atr) or atr <= 0: return None
 
         prev_high = df["high"].iloc[-15:-1].max()
         prev_low = df["low"].iloc[-15:-1].min()
 
-        if price > prev_high and price > float(cur["open"]) and float(cur["volume"]) > df["volume"].iloc[-10:-1].mean():
+        if price > prev_high and price > c_open and float(cur["volume"]) > df["volume"].iloc[-10:-1].mean():
             sl = price - (atr * self.sl_atr_mult)
             risk = price - sl
             if risk <= 0: return None
@@ -213,7 +212,7 @@ class StrategyD_MarketStructure(BaseStrategy):
             return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
                           strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
                           reason="🟢 Elit D: 15M Boğa BOS Kırılımı")
-        elif price < prev_low and price < float(cur["open"]) and float(cur["volume"]) > df["volume"].iloc[-10:-1].mean():
+        elif price < prev_low and price < c_open and float(cur["volume"]) > df["volume"].iloc[-10:-1].mean():
             sl = price + (atr * self.sl_atr_mult)
             risk = sl - price
             if risk <= 0: return None
@@ -246,14 +245,16 @@ class StrategyE_LiquiditySweep(BaseStrategy):
         if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 10800: return None
 
         price = float(cur["close"])
-        c_high, c_low = float(cur["high"]), float(cur["low"])
+        c_open = float(cur["open"])
+        c_high = float(cur["high"])
+        c_low = float(cur["low"])
         atr = float(_atr(df).iloc[-1])
         if pd.isna(atr) or atr <= 0: return None
 
         recent_high = df["high"].iloc[-15:-1].max()
         recent_low = df["low"].iloc[-15:-1].min()
 
-        if c_low < recent_low and price >= recent_low and price > float(cur["open"]):
+        if c_low < recent_low and price >= recent_low and price > c_open:
             sl = c_low - (atr * 0.3)
             risk = price - sl
             if risk <= 0: return None
@@ -262,7 +263,7 @@ class StrategyE_LiquiditySweep(BaseStrategy):
             return Signal(type=SignalType.BUY, symbol=symbol, timeframe=timeframe, price=price,
                           strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
                           reason="🟢 Elit E: 15M Dip Likiditesi Süpürüldü")
-        elif c_high > recent_high and price <= recent_high and price < float(cur["open"]):
+        elif c_high > recent_high and price <= recent_high and price < c_open:
             sl = c_high + (atr * self.sl_atr_mult)
             risk = sl - price
             if risk <= 0: return None
@@ -301,7 +302,7 @@ class StrategyF_TrendBounce(BaseStrategy):
         if pd.isna(atr) or atr <= 0: return None
 
         dist = abs(price - ema20) / ema20
-        if dist < 0.003: # EMA-20'ye %0.3 yakınlıkta
+        if dist < 0.003:
             if price > ema20 and price > c_open:
                 sl = price - (atr * self.sl_atr_mult)
                 risk = price - sl
