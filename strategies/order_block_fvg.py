@@ -16,6 +16,14 @@ def _resample_closed(df: pd.DataFrame, rule: str, delta: pd.Timedelta) -> pd.Dat
     if "timestamp" not in df.columns or len(df) == 0:
         return pd.DataFrame()
     try:
+        df = df.copy()
+        # Timestamp formatı ne olursa olsun datetime'a çevir (Sessiz hataları önler)
+        if not pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
+            if df["timestamp"].dtype in ['int64', 'float64']:
+                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+            else:
+                df["timestamp"] = pd.to_datetime(df["timestamp"])
+
         res = df.resample(rule, on="timestamp").agg(AGG).dropna()
         if len(res) == 0:
             return res
@@ -38,7 +46,7 @@ def _atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
 
 
 # =====================================================================
-# STRATEJİ A: Discount / Premium & FVG Likidite Avı (Esnetilmiş)
+# STRATEJİ A: Discount / Premium & FVG Likidite Avı
 # =====================================================================
 class StrategyA_OrderBlock(BaseStrategy):
     name = "Elit A (Discount/Premium & FVG)"
@@ -48,16 +56,16 @@ class StrategyA_OrderBlock(BaseStrategy):
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
-        if len(df) < 150: return None
+        if len(df) < 100: return None
         _clean_old_signals()
         df = df.iloc[:-1].reset_index(drop=True)
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d1) < 30: return None
+        if len(d1) < 20: return None
 
         key = f"{symbol}_A"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 5400: return None # 1.5 saat cooldown
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 3600: return None # 1 saat cooldown
 
         price = float(cur["close"])
         c_open, c_high, c_low = float(cur["open"]), float(cur["high"]), float(cur["low"])
@@ -96,7 +104,7 @@ class StrategyA_OrderBlock(BaseStrategy):
 
 
 # =====================================================================
-# STRATEJİ B: Impulse & Correction Bitişi (Esnetilmiş)
+# STRATEJİ B: Impulse & Correction Bitişi
 # =====================================================================
 class StrategyB_FVG(BaseStrategy):
     name = "Elit B (Impulse & Correction Bitişi)"
@@ -106,30 +114,29 @@ class StrategyB_FVG(BaseStrategy):
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
-        if len(df) < 150: return None
+        if len(df) < 100: return None
         _clean_old_signals()
         df = df.iloc[:-1].reset_index(drop=True)
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d1) < 20: return None
+        if len(d1) < 15: return None
 
         key = f"{symbol}_B"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 5400: return None
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 3600: return None
 
         c, o = d1["close"].values, d1["open"].values
         body = abs(c - o)
         avg_body = pd.Series(body).rolling(10).mean().iloc[-1]
 
-        # Katsayı esnetildi (1.1 katı)
-        is_imp_bull = (c[-2] > o[-2]) and (body[-2] > 1.1 * avg_body)
-        is_imp_bear = (c[-2] < o[-2]) and (body[-2] > 1.1 * avg_body)
+        is_imp_bull = (c[-2] > o[-2]) and (body[-2] > 1.05 * avg_body)
+        is_imp_bear = (c[-2] < o[-2]) and (body[-2] > 1.05 * avg_body)
         price = float(cur["close"])
         atr = float(_atr(d1).iloc[-1])
         if pd.isna(atr) or atr <= 0: return None
 
         vol_avg = df["volume"].iloc[-10:-1].mean()
-        is_vol = float(cur["volume"]) > (vol_avg * 1.1)
+        is_vol = float(cur["volume"]) > (vol_avg * 1.05)
 
         if is_imp_bull and price > o[-2] and is_vol and price > float(cur["open"]):
             sl = float(d1["low"].iloc[-2]) - (atr * 0.4)
@@ -153,7 +160,7 @@ class StrategyB_FVG(BaseStrategy):
 
 
 # =====================================================================
-# STRATEJİ C: Orderflow Imbalance & Delta Reversal (Esnetilmiş)
+# STRATEJİ C: Orderflow Imbalance & Delta Reversal
 # =====================================================================
 class StrategyC_TrendBreak(BaseStrategy):
     name = "Elit C (Orderflow Imbalance & Delta)"
@@ -163,26 +170,26 @@ class StrategyC_TrendBreak(BaseStrategy):
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
-        if len(df) < 150: return None
+        if len(df) < 100: return None
         _clean_old_signals()
         df = df.iloc[:-1].reset_index(drop=True)
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d1) < 20: return None
+        if len(d1) < 15: return None
 
         key = f"{symbol}_C"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 5400: return None
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 3600: return None
 
         price = float(cur["close"])
         c_open = float(cur["open"])
         atr = float(_atr(d1).iloc[-1])
         if pd.isna(atr) or atr <= 0: return None
 
-        vol_spike = float(cur["volume"]) > (df["volume"].iloc[-15:-1].mean() * 1.4)
+        vol_spike = float(cur["volume"]) > (df["volume"].iloc[-15:-1].mean() * 1.2)
         body_size = abs(price - c_open)
         total_range = float(cur["high"]) - float(cur["low"])
-        is_pinbar = total_range > (2.2 * body_size) if body_size > 0 else False
+        is_pinbar = total_range > (2.0 * body_size) if body_size > 0 else False
 
         if vol_spike and is_pinbar:
             if price > c_open:
@@ -207,7 +214,7 @@ class StrategyC_TrendBreak(BaseStrategy):
 
 
 # =====================================================================
-# STRATEJİ D: Market Structure Break (BOS) (Esnetilmiş)
+# STRATEJİ D: Market Structure Break (BOS)
 # =====================================================================
 class StrategyD_MarketStructure(BaseStrategy):
     name = "Elit D (BOS & Yapı Kırılımı)"
@@ -217,16 +224,16 @@ class StrategyD_MarketStructure(BaseStrategy):
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
-        if len(df) < 150: return None
+        if len(df) < 100: return None
         _clean_old_signals()
         df = df.iloc[:-1].reset_index(drop=True)
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d1) < 20: return None
+        if len(d1) < 15: return None
 
         key = f"{symbol}_D"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 5400: return None
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 3600: return None
 
         price = float(cur["close"])
         atr = float(_atr(d1).iloc[-1])
@@ -234,7 +241,7 @@ class StrategyD_MarketStructure(BaseStrategy):
 
         prev_high = d1["high"].iloc[-15:-1].max()
         prev_low = d1["low"].iloc[-15:-1].min()
-        is_vol = float(cur["volume"]) > (df["volume"].iloc[-10:-1].mean() * 1.15)
+        is_vol = float(cur["volume"]) > (df["volume"].iloc[-10:-1].mean() * 1.1)
 
         if price > prev_high and is_vol and price > float(cur["open"]):
             sl = price - (atr * self.sl_atr_mult)
@@ -258,7 +265,7 @@ class StrategyD_MarketStructure(BaseStrategy):
 
 
 # =====================================================================
-# STRATEJİ E: Liquidity Sweep & Stop Hunt (Esnetilmiş)
+# STRATEJİ E: Liquidity Sweep & Stop Hunt
 # =====================================================================
 class StrategyE_LiquiditySweep(BaseStrategy):
     name = "Elit E (Likidite Sweep / Stop Avı)"
@@ -268,16 +275,16 @@ class StrategyE_LiquiditySweep(BaseStrategy):
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
-        if len(df) < 150: return None
+        if len(df) < 100: return None
         _clean_old_signals()
         df = df.iloc[:-1].reset_index(drop=True)
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d1) < 20: return None
+        if len(d1) < 15: return None
 
         key = f"{symbol}_E"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 5400: return None
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 3600: return None
 
         price = float(cur["close"])
         c_high, c_low = float(cur["high"]), float(cur["low"])
@@ -309,7 +316,7 @@ class StrategyE_LiquiditySweep(BaseStrategy):
 
 
 # =====================================================================
-# STRATEJİ F: Session Open & Mitigation OB (Esnetilmiş)
+# STRATEJİ F: Session Open & Mitigation OB
 # =====================================================================
 class StrategyF_TrendBounce(BaseStrategy):
     name = "Elit F (Session Open & Mitigation OB)"
@@ -319,16 +326,16 @@ class StrategyF_TrendBounce(BaseStrategy):
         self.rr = rr
 
     def analyze(self, df: pd.DataFrame, symbol: str, timeframe: str) -> Signal | None:
-        if len(df) < 150: return None
+        if len(df) < 100: return None
         _clean_old_signals()
         df = df.iloc[:-1].reset_index(drop=True)
         d1 = _resample_closed(df, "1h", pd.Timedelta(hours=1))
-        if len(d1) < 25: return None
+        if len(d1) < 15: return None
 
         key = f"{symbol}_F"
         cur = df.iloc[-1]
         now_ts = cur["timestamp"]
-        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 5400: return None
+        if key in _last_signal and (now_ts - _last_signal[key]).total_seconds() < 3600: return None
 
         price = float(cur["close"])
         c_open = float(cur["open"])
@@ -339,7 +346,7 @@ class StrategyF_TrendBounce(BaseStrategy):
         prev_body_bot = min(float(d1["open"].iloc[-2]), float(d1["close"].iloc[-2]))
 
         if price >= prev_body_bot and price <= prev_body_top and price > c_open:
-            vol_ok = float(cur["volume"]) > (df["volume"].iloc[-10:-1].mean() * 1.1)
+            vol_ok = float(cur["volume"]) > (df["volume"].iloc[-10:-1].mean() * 1.05)
             if vol_ok:
                 sl = prev_body_bot - (atr * self.sl_atr_mult)
                 risk = price - sl
@@ -350,7 +357,7 @@ class StrategyF_TrendBounce(BaseStrategy):
                               strategy_name=self.name, strength=None, stop_loss=sl, take_profit=tp,
                               reason="🟢 Elit F: Seviye Testi (Mitigation OB) + Alış Tepkisi")
         elif price <= prev_body_top and price >= prev_body_bot and price < c_open:
-            vol_ok = float(cur["volume"]) > (df["volume"].iloc[-10:-1].mean() * 1.1)
+            vol_ok = float(cur["volume"]) > (df["volume"].iloc[-10:-1].mean() * 1.05)
             if vol_ok:
                 sl = prev_body_top + (atr * self.sl_atr_mult)
                 risk = sl - price
