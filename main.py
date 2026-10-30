@@ -7,12 +7,7 @@ from flask import Flask
 # .env dosyasını yükle (Eğer bilgisayarda çalıştırırsan diye)
 load_dotenv()
 
-# Yeni 3 stratejimizi içe aktarıyoruz
-from strategies.order_block_fvg import (
-    StrategyA_OrderBlock,
-    StrategyB_FVG,
-    StrategyC_TrendBreak
-)
+from strategies.multi_strategy import MultiStrategy
 from core.market_data import MarketData
 from core.telegram_notifier import TelegramNotifier
 from core.logger import log
@@ -36,13 +31,7 @@ async def main():
     symbols = os.getenv("SYMBOLS", "BTC/USDT").split(",")
     timeframe = os.getenv("TIMEFRAME", "15m")
     
-    # 3 ayrı stratejimizi burada bir listeye (pakete) koyuyoruz
-    strategies = [
-        StrategyA_OrderBlock(),
-        StrategyB_FVG(),
-        StrategyC_TrendBreak()
-    ]
-    
+    strategy = MultiStrategy()
     notifier = TelegramNotifier()
     market = MarketData()
 
@@ -62,22 +51,15 @@ async def main():
         try:
             df = await market.fetch_ohlcv(symbol, timeframe)
             if not df.empty:
-                signal_found = False
-                # Her coin için 3 stratejiyi sırayla denetle
-                for strategy in strategies:
-                    signal = strategy.analyze(df, symbol, timeframe)
-                    if signal:
-                        if not signal_allowed(signal, btc_regime):
-                            log.info(f"Sinyal engellendi ({strategy.name} | BTC {btc_regime}): {symbol}")
-                        else:
-                            log.info(f"SİNYAL BULUNDU ({strategy.name}): {symbol}")
-                            await notifier.send(signal)
-                            signal_found = True
-                            break # Aynı turda aynı coinden birden fazla sinyal çıkmasını engeller
-                
-                if not signal_found:
+                signal = strategy.analyze(df, symbol, timeframe)
+                if signal:
+                    if not signal_allowed(signal, btc_regime):
+                        log.info(f"Sinyal engellendi (BTC {btc_regime}): {symbol}")
+                    else:
+                        log.info(f"SİNYAL BULUNDU: {symbol}")
+                        await notifier.send(signal)
+                else:
                     log.info(f"Sinyal yok: {symbol}")
-                    
         except Exception as e:
             log.error(f"Hata ({symbol}): {e}")
                 
