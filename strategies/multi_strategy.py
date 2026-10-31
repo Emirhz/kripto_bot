@@ -6,7 +6,7 @@ Sinyal mesajında hangi stratejiden geldiği yazar (ör. "Strateji A+D").
   A: Range & FVG (Premium/Discount)
   B: Impulse Devamı
   C: Pinbar Reversal
-  D: BOS Kırılımı (hacimli)
+  D: BOS Kırılımı (hacimli, geri test girişli)
   E: Likidite Sweep
   F: EMA-20 Pullback
 
@@ -206,50 +206,57 @@ def _strat_c(x: _X):
     return None
 
 
-# ============ STRATEJİ D: 15M BOS KIRILIMI ============
+# ============ STRATEJİ D: 15M BOS KIRILIMI (geri test girişli) ============
+# Hacimli BOS mumunun kapanışına girmez (zirveyi kovalamak olur).
+# BOS olduktan sonra kırılan seviyenin geri test edilip tutunmasını bekler.
 def _strat_d(x: _X):
     n = x.n
-    ba = x.body_avg[-1]
-    if pd.isna(ba) or not x.vol_ok(1.5):
-        return None
-    # Kırılım mumu güçlü gövdeli olmalı
-    if x.body[-1] < 1.2 * ba or x.body[-1] < 0.8 * x.atr:
-        return None
+    atr = x.atr
     price = x.c[-1]
-    rng = x.h[-1] - x.l[-1]
-    if rng <= 0:
-        return None
 
-    # Yukarı kırılım: kırılmamış son swing tepesinin üstünde kapanış
-    if (price > x.o[-1] and price > x.ema50[-1] and x.ema20[-1] > x.ema50[-1]
-            and price >= x.l[-1] + 0.7 * rng):
-        for j in range(n - 5, n - 45, -1):
-            if j < 3:
-                break
-            if x.h[j] > x.h[j - 3:j].max() and x.h[j] > x.h[j + 1:j + 4].max():
-                level = x.h[j]
-                if (x.c[j + 1:n - 1] > level).any():
-                    continue
-                if price > level and x.c[-2] <= level:
-                    sl = x.l[n - 10:].min() - SL_BUFFER_ATR * x.atr
-                    s = 0.8 + (0.1 if x.vol_ok(2.0) else 0)
-                    return _cand("long", sl, s, "Hacimli yukarı BOS")
-                break
-    # Aşağı kırılım
-    if (price < x.o[-1] and price < x.ema50[-1] and x.ema20[-1] < x.ema50[-1]
-            and price <= x.h[-1] - 0.7 * rng):
-        for j in range(n - 5, n - 45, -1):
-            if j < 3:
-                break
-            if x.l[j] < x.l[j - 3:j].min() and x.l[j] < x.l[j + 1:j + 4].min():
-                level = x.l[j]
-                if (x.c[j + 1:n - 1] < level).any():
-                    continue
-                if price < level and x.c[-2] >= level:
-                    sl = x.h[n - 10:].max() + SL_BUFFER_ATR * x.atr
-                    s = 0.8 + (0.1 if x.vol_ok(2.0) else 0)
-                    return _cand("short", sl, s, "Hacimli aşağı BOS")
-                break
+    for k in range(n - 2, n - 9, -1):  # k = BOS mumunun indeksi (son 2-8 mum)
+        ba, va = x.body_avg[k], x.vol_avg[k]
+        if pd.isna(ba) or pd.isna(va):
+            continue
+        rng_k = x.h[k] - x.l[k]
+        if rng_k <= 0 or x.v[k] < 1.5 * va:
+            continue
+        if x.body[k] < 1.2 * ba or x.body[k] < 0.8 * atr:
+            continue
+
+        # ---- Yukarı BOS + geri test ----
+        if x.c[k] > x.o[k] and x.c[k] >= x.l[k] + 0.7 * rng_k and x.ema20[-1] > x.ema50[-1]:
+            for j in range(k - 4, k - 44, -1):
+                if j < 3:
+                    break
+                if x.h[j] > x.h[j - 3:j].max() and x.h[j] > x.h[j + 1:j + 4].max():
+                    level = x.h[j]
+                    if (x.c[j + 1:k] > level).any() or x.c[k] <= level:
+                        continue
+                    holds = (x.c[k + 1:] >= level - 0.3 * atr).all()
+                    retest = x.l[-1] <= level + 0.3 * atr and price > level and price > x.o[-1]
+                    if holds and retest and (price - level) <= 1.0 * atr:
+                        sl = x.l[k:].min() - SL_BUFFER_ATR * atr
+                        s = 0.8 + (0.1 if x.v[k] >= 2.0 * va else 0)
+                        return _cand("long", sl, s, "Yukarı BOS sonrası geri test tuttu")
+                    break
+
+        # ---- Aşağı BOS + geri test ----
+        if x.c[k] < x.o[k] and x.c[k] <= x.h[k] - 0.7 * rng_k and x.ema20[-1] < x.ema50[-1]:
+            for j in range(k - 4, k - 44, -1):
+                if j < 3:
+                    break
+                if x.l[j] < x.l[j - 3:j].min() and x.l[j] < x.l[j + 1:j + 4].min():
+                    level = x.l[j]
+                    if (x.c[j + 1:k] < level).any() or x.c[k] >= level:
+                        continue
+                    holds = (x.c[k + 1:] <= level + 0.3 * atr).all()
+                    retest = x.h[-1] >= level - 0.3 * atr and price < level and price < x.o[-1]
+                    if holds and retest and (level - price) <= 1.0 * atr:
+                        sl = x.h[k:].max() + SL_BUFFER_ATR * atr
+                        s = 0.8 + (0.1 if x.v[k] >= 2.0 * va else 0)
+                        return _cand("short", sl, s, "Aşağı BOS sonrası geri test tuttu")
+                    break
     return None
 
 
