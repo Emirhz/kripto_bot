@@ -25,8 +25,10 @@ from strategies.base import BaseStrategy, Signal, SignalType
 ENABLED = {"A": True, "B": True, "C": True, "D": True, "E": True, "F": True}
 USE_ICT = True            # mevcut ICT stratejisi de çalışsın mı
 RR = 2.0                  # TP = risk x RR
-SL_BUFFER_ATR = 0.3       # SL, yapının ötesine bu kadar ATR pay bırakır
-MIN_RISK_ATR = 0.8        # SL mesafesi en az bu kadar ATR olsun (çok sıkı stop olmasın)
+SL_BUFFER_ATR = 0.5       # SL, yapının ötesine bu kadar ATR pay bırakır
+MIN_RISK_ATR = 1.5        # SL mesafesi en az bu kadar ATR olsun (normal dalgalanmada stop olmasın)
+MIN_RISK_PCT = 0.004      # SL mesafesi en az fiyatın %0,4'ü olsun (komisyon SL'yi yemesin)
+REVERSAL_TREND_FILTER = True  # C ve E sadece EMA-100 yönünde çalışsın (trene ters dönüş avı yok)
 MAX_RISK_PCT = 0.03       # SL mesafesi fiyatın %3'ünden büyükse sinyal verme
 COOLDOWN_HOURS = 3        # aynı coin + aynı strateji için bekleme süresi
 SYMBOL_COOLDOWN_HOURS = 3 # aynı coine (A-F için) en fazla bu aralıkla sinyal gelsin
@@ -72,12 +74,21 @@ class _X:
         cs = pd.Series(self.c)
         self.ema20 = cs.ewm(span=20, adjust=False).mean().values
         self.ema50 = cs.ewm(span=50, adjust=False).mean().values
+        self.ema100 = cs.ewm(span=100, adjust=False).mean().values
         self.body_avg = pd.Series(self.body).rolling(20).mean().shift(1).values
         self.vol_avg = pd.Series(self.v).rolling(20).mean().shift(1).values
 
     def vol_ok(self, mult: float = 1.0) -> bool:
         va = self.vol_avg[-1]
         return not pd.isna(va) and self.v[-1] > mult * va
+
+
+def _rev_ok(x: _X, side: str) -> bool:
+    """Dönüş stratejileri (C, E) için: sadece EMA-100 yönünde işlem."""
+    if not REVERSAL_TREND_FILTER:
+        return True
+    price = x.c[-1]
+    return price > x.ema100[-1] if side == "long" else price < x.ema100[-1]
 
 
 def _cand(side: str, sl: float, strength: float, note: str) -> dict:
@@ -194,12 +205,14 @@ def _strat_c(x: _X):
     prev_hi = x.h[n - 21:n - 1].max()
 
     # Boğa pinbar: uzun alt iğne, son 20 mumun dibine yakın
-    if lower >= 2 * body and lower >= 0.6 * rng and x.l[-1] <= prev_lo + 0.3 * x.atr:
+    if (lower >= 2 * body and lower >= 0.6 * rng and x.l[-1] <= prev_lo + 0.3 * x.atr
+            and _rev_ok(x, "long")):
         sl = x.l[-1] - SL_BUFFER_ATR * x.atr
         s = 0.7 + (0.1 if x.vol_ok() else 0) + (0.1 if x.c[-1] > x.o[-1] else 0)
         return _cand("long", sl, s, "Dipte boğa pinbar")
     # Ayı pinbar: uzun üst iğne, son 20 mumun tepesine yakın
-    if upper >= 2 * body and upper >= 0.6 * rng and x.h[-1] >= prev_hi - 0.3 * x.atr:
+    if (upper >= 2 * body and upper >= 0.6 * rng and x.h[-1] >= prev_hi - 0.3 * x.atr
+            and _rev_ok(x, "short")):
         sl = x.h[-1] + SL_BUFFER_ATR * x.atr
         s = 0.7 + (0.1 if x.vol_ok() else 0) + (0.1 if x.c[-1] < x.o[-1] else 0)
         return _cand("short", sl, s, "Tepede ayı pinbar")
@@ -274,13 +287,15 @@ def _strat_e(x: _X):
 
     # Dip süpürme: eski dibin altına iğne, içeri kapanış
     if (x.l[-1] < ref_lo - 0.05 * x.atr and (ref_lo - x.l[-1]) >= 0.2 * x.atr
-            and price > ref_lo and price > x.o[-1] and price >= x.l[-1] + 0.5 * rng):
+            and price > ref_lo and price > x.o[-1] and price >= x.l[-1] + 0.5 * rng
+            and _rev_ok(x, "long")):
         sl = x.l[-1] - SL_BUFFER_ATR * x.atr
         s = 0.85
         return _cand("long", sl, s, "Dip likidite süpürüldü, içeri döndü")
     # Tepe süpürme
     if (x.h[-1] > ref_hi + 0.05 * x.atr and (x.h[-1] - ref_hi) >= 0.2 * x.atr
-            and price < ref_hi and price < x.o[-1] and price <= x.h[-1] - 0.5 * rng):
+            and price < ref_hi and price < x.o[-1] and price <= x.h[-1] - 0.5 * rng
+            and _rev_ok(x, "short")):
         sl = x.h[-1] + SL_BUFFER_ATR * x.atr
         s = 0.85
         return _cand("short", sl, s, "Tepe likidite süpürüldü, içeri döndü")
@@ -354,21 +369,22 @@ class MultiStrategy(BaseStrategy):
             if c is None:
                 continue
 
-            # SL düzeltmeleri
+            # SL düzeltmeleri (çok yakın stop'u genişlet)
+            min_risk = max(MIN_RISK_ATR * x.atr, MIN_RISK_PCT * price)
             if c["side"] == "long":
                 if c["sl"] >= price:
                     continue
                 risk = price - c["sl"]
-                if risk < MIN_RISK_ATR * x.atr:
-                    c["sl"] = price - MIN_RISK_ATR * x.atr
-                    risk = MIN_RISK_ATR * x.atr
+                if risk < min_risk:
+                    c["sl"] = price - min_risk
+                    risk = min_risk
             else:
                 if c["sl"] <= price:
                     continue
                 risk = c["sl"] - price
-                if risk < MIN_RISK_ATR * x.atr:
-                    c["sl"] = price + MIN_RISK_ATR * x.atr
-                    risk = MIN_RISK_ATR * x.atr
+                if risk < min_risk:
+                    c["sl"] = price + min_risk
+                    risk = min_risk
             if risk / price > MAX_RISK_PCT:
                 continue
             c["risk"] = risk
@@ -433,5 +449,5 @@ class MultiStrategy(BaseStrategy):
             price=price, strategy_name=f"Strateji {label} ({names})",
             strength=strength,
             stop_loss=sl, take_profit=tp,
-            reason=f"{emoji} Strateji {label} | {' + '.join(notes)} | Güç {round(strength * 10)}/10",
+            reason=f"{emoji} Strateji {label} | {' + '.join(notes)}",
         )
