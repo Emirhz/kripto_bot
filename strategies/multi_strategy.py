@@ -26,13 +26,19 @@ ENABLED = {"A": True, "B": True, "C": True, "D": True, "E": True, "F": True}
 USE_ICT = True            # mevcut ICT stratejisi de çalışsın mı
 RR = 2.0                  # TP = risk x RR
 SL_BUFFER_ATR = 0.5       # SL, yapının ötesine bu kadar ATR pay bırakır
-MIN_RISK_ATR = 1.5        # SL mesafesi en az bu kadar ATR olsun (normal dalgalanmada stop olmasın)
-MIN_RISK_PCT = 0.004      # SL mesafesi en az fiyatın %0,4'ü olsun (komisyon SL'yi yemesin)
+MIN_RISK_ATR = 2.5        # (ESKİ: 1.5) SL mesafesi en az bu kadar ATR olsun (normal dalgalanmada/fitilde stop olmasın)
+MIN_RISK_PCT = 0.007      # (ESKİ: 0.004) SL mesafesi en az fiyatın %0,7'si olsun
 REVERSAL_TREND_FILTER = True  # C ve E sadece EMA-100 yönünde çalışsın (trene ters dönüş avı yok)
 MAX_RISK_PCT = 0.03       # SL mesafesi fiyatın %3'ünden büyükse sinyal verme
 COOLDOWN_HOURS = 3        # aynı coin + aynı strateji için bekleme süresi
 SYMBOL_COOLDOWN_HOURS = 3 # aynı coine (A-F için) en fazla bu aralıkla sinyal gelsin
 MIN_STRENGTH = 0.8        # güç puanı bunun altındaysa sinyal verme (1.0 = en güçlü)
+
+# Strateji D için "geç giriş" filtresi:
+# Short sinyali, son D_RANGE_LOOKBACK mumluk aralığın en dibinde (alt %20) verilmez.
+# Long sinyali, aralığın en tepesinde (üst %20) verilmez. (Düşüşün/yükselişin sonunda girmeyi engeller)
+D_RANGE_LOOKBACK = 96     # 96 mum = 24 saat (15m)
+D_EXTREME_ZONE = 0.20
 # -----------------------------------------
 
 SHORT_NAMES = {
@@ -93,6 +99,15 @@ def _rev_ok(x: _X, side: str) -> bool:
 
 def _cand(side: str, sl: float, strength: float, note: str) -> dict:
     return {"side": side, "sl": float(sl), "strength": min(strength, 1.0), "note": note}
+
+
+def _range_pos(x: _X, lookback: int) -> float:
+    """Fiyatın son 'lookback' mumluk aralıktaki yeri: 0 = dip, 1 = tepe."""
+    hi = x.h[-lookback:].max()
+    lo = x.l[-lookback:].min()
+    if hi <= lo:
+        return 0.5
+    return (x.c[-1] - lo) / (hi - lo)
 
 
 # ============ STRATEJİ A: 15M RANGE & FVG ============
@@ -222,10 +237,12 @@ def _strat_c(x: _X):
 # ============ STRATEJİ D: 15M BOS KIRILIMI (geri test girişli) ============
 # Hacimli BOS mumunun kapanışına girmez (zirveyi kovalamak olur).
 # BOS olduktan sonra kırılan seviyenin geri test edilip tutunmasını bekler.
+# YENİ: Fiyat zaten son 24 saatlik aralığın dibinde/tepesindeyse sinyal vermez (geç giriş).
 def _strat_d(x: _X):
     n = x.n
     atr = x.atr
     price = x.c[-1]
+    pos = _range_pos(x, D_RANGE_LOOKBACK)
 
     for k in range(n - 2, n - 9, -1):  # k = BOS mumunun indeksi (son 2-8 mum)
         ba, va = x.body_avg[k], x.vol_avg[k]
@@ -239,6 +256,8 @@ def _strat_d(x: _X):
 
         # ---- Yukarı BOS + geri test ----
         if x.c[k] > x.o[k] and x.c[k] >= x.l[k] + 0.7 * rng_k and x.ema20[-1] > x.ema50[-1]:
+            if pos > 1 - D_EXTREME_ZONE:
+                continue  # aralığın tepesinde long açma
             for j in range(k - 4, k - 44, -1):
                 if j < 3:
                     break
@@ -256,6 +275,8 @@ def _strat_d(x: _X):
 
         # ---- Aşağı BOS + geri test ----
         if x.c[k] < x.o[k] and x.c[k] <= x.h[k] - 0.7 * rng_k and x.ema20[-1] < x.ema50[-1]:
+            if pos < D_EXTREME_ZONE:
+                continue  # aralığın dibinde short açma
             for j in range(k - 4, k - 44, -1):
                 if j < 3:
                     break
